@@ -1,10 +1,10 @@
 # Dev Island — multi-panel plan
 
-Status: **Phases 0–3 implemented; Phase 4 partially built (drag-out outstanding);
-Phases 5–6 proposed.** Phase 0 is *partial* — the YouTube/Chrome test and the
-paste-notice check were never run. §1 states facts verified against the source;
-rows marked *(Phase 1/2/3/4)* describe the code as it now stands, not the original
-commit. §11 records the signing setup that is in place.
+Status: **Phases 0–4 implemented; Phases 5–6 proposed.** Phase 0 is *partial* — the
+YouTube/Chrome test and the paste-notice check were never run. §1 states facts
+verified against the source; rows marked *(Phase 1/2/3/4)* describe the code as it
+now stands, not the original commit. §11 records the signing setup that is in
+place.
 
 | Phase | State |
 | --- | --- |
@@ -13,7 +13,7 @@ commit. §11 records the signing setup that is in place.
 | 1.5 — rename + self-signed signing | done |
 | 2 — clipboard panel + auto-paste | done, verified by use |
 | 3 — terminal history panel | done |
-| 4 — file shelf | store, panel, drag-in, file-only drop, pruning done; drag-out remaining |
+| 4 — file shelf | **built** — store, panel, drag-in, file-only drop, pruning, drag-out |
 | 5 — music visual upgrade | not built |
 | 6 — browser-media fallback | only if Phase 0 demands it |
 
@@ -340,7 +340,7 @@ never touches the real file.
 | `ShelfPanel` | File icon, name, parent folder, size; click reveals in Finder; right-click Open / Reveal / Copy Path / Remove |
 | Drop | `public.file-url` only; anything else is rejected so the drag animates back rather than being silently swallowed |
 | Drag-in | Opens the shelf, not the default panel; a cancelled drag restores the previous panel |
-| Drag-out | **Not built** — the last piece |
+| Drag-out | `NSView` + `NSDraggingSource`, 3 pt threshold, copy-only, icon as the drag preview |
 
 ### Design
 
@@ -356,8 +356,10 @@ never touches the real file.
   forever. A plain `bookmarkData` is still worth the ~10 lines: it resolves
   across renames and moves, which a path never does. Store both — path for
   display and cheap comparison, bookmark for resolution.
-- **Drag out** via `NSItemProvider` to Finder / Slack / a browser upload field.
-  This is the half that makes it a tool rather than a list.
+- **Drag out** via `NSURL` as the pasteboard writer, which writes `public.file-url`
+  for Finder and browser upload fields. (`NSItemProvider` is the obvious choice but
+  does not conform to `NSPasteboardWriting` on this SDK.) This is the half that
+  makes it a tool rather than a list.
 - Click: **Reveal in Finder** — the dev-relevant action, and free.
 - Right-click: Reveal in Finder, Copy Path, Remove.
 - **Files only.** Text and links are the clipboard's job: copying them is one
@@ -484,42 +486,48 @@ terminal it does not inherit the app's TCC grant and receives nothing, which loo
 identical to Finder swallowing the events. The probe inside the signed app is the
 only reliable way to ask.
 
-### Drag-out mechanics
+### Drag-out mechanics — built
 
 Dragging a row out is what makes the shelf a tool rather than a list, and it
 cannot be done with SwiftUI's `.onDrag`. `.onDrag` and `.onTapGesture` compete
-for the same gesture, so click-versus-drag becomes unpredictable. The row needs a
-small `NSView` that is both click handler and `NSDraggingSource`:
+for the same gesture, so click-versus-drag becomes unpredictable. Each row is
+overlaid with a transparent `NSView` (`RowInputView`) that owns the mouse:
 
 ```
 mouseDown   → record the event, do NOT act
 mouseDragged → if hypot(dx, dy) > 3 pt, beginDraggingSession(with:source:)
-mouseUp     → if no drag started, fire the click
+mouseUp     → if no drag started, click: remove-hit-rect → remove, else reveal
 ```
 
-- **The 3 pt threshold** is what makes a click a click. boring.notch uses the same
-  value.
+The SwiftUI row still draws everything; the `NSView` is input only, so the visuals
+stay declarative. Details that matter:
+
 - **Fire the click on `mouseUp`, not `mouseDown`.** boring.notch fires on
   mouse-down unconditionally, so pressing a row and then dragging both reveals the
   file in Finder *and* starts a drag. The threshold does not prevent this — it
-  only stops the drag from starting on a small movement. This is the one place to
+  only stops the drag from starting on a small movement. This is the one place we
   deliberately diverge.
-- **Restrict the drag to the copy operation.** A shelf holds references, so
-  dragging a row out must never *move* the real file; without this, dropping onto
-  another volume can relocate the user's data. boring.notch exposes the same
-  behaviour as a `copyOnDrag` preference; for us it should be unconditional.
-- **One `NSItemProvider` per item**, each URL registered separately so a
-  multi-selection arrives at Finder as N files, with text items joined by
-  newlines onto a single provider.
-- **Degrade instead of failing.** If a reference no longer resolves, register the
-  display name as text so the row is still draggable rather than silently inert.
-- **Render the drag preview from the row** with `ImageRenderer` (~40 lines), so
-  the thing under the cursor looks like the row instead of a generic file icon.
-- Bind `.onDrop(…, isTargeted:)` to a highlight state: a drop zone with no
-  visual feedback reads as broken.
-- No new collapse state is needed: reuse `isInteracting` (see above) rather than
-  adding a second flag, and set it around the drag session on both the drag-in and
-  drag-out paths.
+- **`NSURL` is the pasteboard writer, not `NSItemProvider`.** `NSItemProvider`
+  does not conform to `NSPasteboardWriting` on this SDK, so the obvious choice does
+  not compile; `NSURL` writes `public.file-url` for a file URL, which is what
+  Finder and upload fields accept.
+- **Copy only, unconditionally.** A shelf holds references, so dragging out must
+  never *move* the real file onto another volume. boring.notch exposes the same
+  behaviour as a `copyOnDrag` preference; here it is not negotiable. Consequence
+  worth knowing: dropping a row onto a Finder folder **duplicates** the file.
+- **The hover affordance is drawn, not clickable.** The `NSView` covers the row,
+  so a SwiftUI button would never receive the click. The ✕ is an `Image` and the
+  view hit-tests its rect, which keeps one owner for the mouse.
+- **Forward `scrollWheel`.** The overlay sits above SwiftUI's content, so without
+  forwarding, the list stops scrolling whenever the pointer is over a row.
+- **Suppress collapse for both paths.** `isInteracting` now lives on `IslandModel`
+  rather than the controller, because views need it too: a context menu moves the
+  pointer off the island, and a drag-out leaves it entirely. Set around the menu
+  call and around the drag session.
+- The drag preview is the file's icon at 32 pt. A row render would look nicer but
+  costs an `ImageRenderer` pass per drag for little gain.
+- No multi-selection yet, so one `NSDraggingItem` per session. When selection
+  arrives, register one writer per item so Finder receives N files.
 
 ### What not to take from boring.notch
 
@@ -611,7 +619,7 @@ re-checking — it may mask the browser session.
 | 1.5 | ~~Rename to `dev.island` + `NSAppleEventsUsageDescription`; self-signed cert; `build.sh` signing; verify grants survive a rebuild~~ **done** | — |
 | 2 | ~~Clipboard provider + frequent strip + `AccessibilityPaster`~~ **done** | — |
 | 3 | ~~Terminal provider + ignore rules + redaction~~ **done** | — |
-| 4 | Shelf. **Done:** drag-in detector (risks 8, 10 closed), store with bookmarks and load-time pruning, panel, file-only drop handling, drag-in opens the shelf and restores the previous panel on cancel. **Remaining:** drag-out from a row (`NSView` + `NSDraggingSource`, 3 pt threshold, copy-only) | half day left |
+| 4 | ~~Shelf: drag-in detector (risks 8, 10 closed), store with bookmarks and load-time pruning, panel, file-only drop, drag-out~~ **done** | — |
 | 5 | Music visuals | half day |
 | 6 | Browser fallback, only if Phase 0 demands it | half day |
 

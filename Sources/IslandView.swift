@@ -376,7 +376,7 @@ struct ShelfPanel: View {
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(spacing: 1) {
                 ForEach(shelf.items) { item in
-                    ShelfRow(item: item, shelf: shelf)
+                    ShelfRow(item: item, model: model, shelf: shelf)
                 }
             }
             .padding(.bottom, 2)
@@ -439,6 +439,7 @@ struct ShelfPanel: View {
 
 struct ShelfRow: View {
     let item: ShelfItem
+    let model: IslandModel
     let shelf: ShelfStore
 
     @State private var hovering = false
@@ -466,14 +467,12 @@ struct ShelfRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if hovering {
-                Button { shelf.remove(item) } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.45))
-                        .frame(width: 14, height: 14)
-                }
-                .buttonStyle(.plain)
-                .help("Remove from shelf (the file itself is untouched)")
+                // Drawn, not clickable: the row's input view owns the mouse and
+                // hit-tests this rect, so the glyph is only the affordance.
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .frame(width: 14, height: 14)
             }
         }
         .padding(.horizontal, 8)
@@ -482,19 +481,22 @@ struct ShelfRow: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(.white.opacity(hovering ? 0.06 : 0))
         )
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture { shelf.reveal(item) }
-        .contextMenu {
-            Button("Open") { shelf.open(item) }
-            Button("Reveal in Finder") { shelf.reveal(item) }
-            Button("Copy Path") { shelf.copyPath(item) }
-            Divider()
-            Button("Remove from Shelf") { shelf.remove(item) }
+        .overlay {
+            GeometryReader { geometry in
+                ShelfRowInput(
+                    item: item,
+                    model: model,
+                    shelf: shelf,
+                    hovering: $hovering,
+                    removeRect: CGRect(
+                        x: max(0, geometry.size.width - 26),
+                        y: 0,
+                        width: 26,
+                        height: geometry.size.height
+                    )
+                )
+            }
         }
-        .help(item.isMissing
-              ? "The original file is gone — remove the row to clear it"
-              : "Click to reveal in Finder · right-click for more")
     }
 
     private var icon: some View {
@@ -516,6 +518,174 @@ struct ShelfRow: View {
         )
         return "\(folder) · \(formatted)"
     }
+}
+
+// MARK: - Shelf row input
+
+/// Transparent input layer for a shelf row.
+///
+/// SwiftUI cannot express this row: `.onDrag` and `.onTapGesture` compete for the
+/// same gesture, so whether a press becomes a click or a drag is unpredictable.
+/// This view owns the mouse instead and decides with a movement threshold. It
+/// draws nothing — the row itself stays SwiftUI — so the visuals stay declarative.
+struct ShelfRowInput: NSViewRepresentable {
+    let item: ShelfItem
+    let model: IslandModel
+    let shelf: ShelfStore
+    @Binding var hovering: Bool
+    let removeRect: CGRect
+
+    func makeNSView(context: Context) -> RowInputView {
+        let view = RowInputView()
+        configure(view)
+        return view
+    }
+
+    func updateNSView(_ view: RowInputView, context: Context) {
+        configure(view)
+    }
+
+    private func configure(_ view: RowInputView) {
+        view.item = item
+        view.model = model
+        view.shelf = shelf
+        view.removeRect = removeRect
+        view.onHoverChange = { hovering = $0 }
+    }
+}
+
+final class RowInputView: NSView, NSDraggingSource {
+    var item: ShelfItem?
+    var model: IslandModel?
+    var shelf: ShelfStore?
+    var removeRect: CGRect = .zero
+    var onHoverChange: ((Bool) -> Void)?
+
+    /// The press that might become a drag. Acting on mouse-down would fire the
+    /// click before we know which gesture this is — boring.notch's handler does
+    /// that, so pressing a row and dragging also reveals it in Finder.
+    private var mouseDownEvent: NSEvent?
+    private var dragStarted = false
+    private var hoverArea: NSTrackingArea?
+
+    /// Below this the press is still a click. Same threshold boring.notch uses.
+    private static let dragThreshold: CGFloat = 3
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
+    override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseDownEvent = event
+        dragStarted = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !dragStarted, let down = mouseDownEvent else { return }
+        let dx = event.locationInWindow.x - down.locationInWindow.x
+        let dy = event.locationInWindow.y - down.locationInWindow.y
+        guard hypot(dx, dy) > Self.dragThreshold else { return }
+
+        dragStarted = true
+        // The pointer leaves the island during a drag-out, which would otherwise
+        // collapse the window and take the drag source with it.
+        model?.isInteracting = true
+        beginDraggingSession(with: [draggingItem()], event: event, source: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let wasDragging = dragStarted
+        mouseDownEvent = nil
+        dragStarted = false
+        guard !wasDragging, let item, let shelf else { return }
+
+        let point = convert(event.locationInWindow, from: nil)
+        if !removeRect.isEmpty, removeRect.contains(point) {
+            shelf.remove(item)
+        } else {
+            shelf.reveal(item)
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard item != nil, shelf != nil else { return }
+
+        let menu = NSMenu()
+        menu.addItem(entry("Open", #selector(openItem)))
+        menu.addItem(entry("Reveal in Finder", #selector(revealItem)))
+        menu.addItem(entry("Copy Path", #selector(copyPath)))
+        menu.addItem(.separator())
+        menu.addItem(entry("Remove from Shelf", #selector(removeFromShelf)))
+
+        // Menu tracking moves the pointer off the island, which would otherwise
+        // collapse it with the menu still open.
+        model?.isInteracting = true
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+        model?.isInteracting = false
+    }
+
+    /// The row sits above SwiftUI's content, so wheel events have to be passed on
+    /// or the list stops scrolling whenever the pointer is over a row.
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
+    }
+
+    // MARK: Dragging out
+
+    private func draggingItem() -> NSDraggingItem {
+        // NSURL conforms to NSPasteboardWriting and writes `public.file-url` for a
+        // file URL, which is what Finder and browser upload fields accept.
+        // NSItemProvider does not conform on this SDK, so it cannot be the writer.
+        let writer: NSPasteboardWriting = (item?.url as NSURL?) ?? NSPasteboardItem()
+        let draggingItem = NSDraggingItem(pasteboardWriter: writer)
+
+        let size = NSSize(width: 32, height: 32)
+        let preview = item.map { NSWorkspace.shared.icon(forFile: $0.url.path) }
+            ?? NSImage(size: size)
+        preview.size = size
+        draggingItem.setDraggingFrame(NSRect(origin: .zero, size: size), contents: preview)
+        return draggingItem
+    }
+
+    func draggingSession(
+        _ session: NSDraggingSession,
+        sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        // Copy only, unconditionally: the shelf holds a reference, so dragging out
+        // must never move the user's real file onto another volume.
+        .copy
+    }
+
+    func draggingSession(
+        _ session: NSDraggingSession,
+        endedAt screenPoint: NSPoint,
+        operation: NSDragOperation
+    ) {
+        model?.isInteracting = false
+    }
+
+    private func entry(_ title: String, _ action: Selector) -> NSMenuItem {
+        let menuItem = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        menuItem.target = self
+        return menuItem
+    }
+
+    @objc private func openItem() { if let item, let shelf { shelf.open(item) } }
+    @objc private func revealItem() { if let item, let shelf { shelf.reveal(item) } }
+    @objc private func copyPath() { if let item, let shelf { shelf.copyPath(item) } }
+    @objc private func removeFromShelf() { if let item, let shelf { shelf.remove(item) } }
 }
 
 // MARK: - Open: clipboard

@@ -30,6 +30,13 @@ final class IslandModel: ObservableObject {
     /// open, because the pointer is still sitting on the island.
     var suppressed = false
 
+    /// Set while a drag is in flight or a context menu is tracking, so the 30 ms
+    /// collapse does not fire while the pointer is legitimately outside the island.
+    /// Lives here rather than on the controller because views need it too: a menu
+    /// opened from a row moves the pointer off the island, and a drag-out leaves it
+    /// entirely.
+    var isInteracting = false
+
     let player = PlayerService()
     let clipboard = ClipboardService()
     let ignoreRules = IgnoreRules()

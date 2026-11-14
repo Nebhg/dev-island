@@ -48,10 +48,6 @@ final class IslandController {
     private var dragOpenedShelf = false
     private let hotKeys = HotKeys()
 
-    /// Set while a menu is tracking or a drag is in flight, so the 30 ms
-    /// collapse does not fire while the pointer is legitimately outside.
-    var isInteracting = false
-
     /// `ISLAND_DRAG_PROBE=1` logs every dragged event with both gate signals, so
     /// risk 10 can be answered on a machine where this app holds the Accessibility
     /// grant — a standalone binary launched from a terminal does not inherit it.
@@ -397,7 +393,7 @@ final class IslandController {
 
         case .leftMouseUp:
             dragCountAtMouseDown = -1
-            isInteracting = false
+            model.isInteracting = false
             restorePanelIfDragWasCancelled()
 
         case .leftMouseDragged:
@@ -422,7 +418,7 @@ final class IslandController {
                 NSPasteboard(name: .drag).clearContents()
                 dragPasteboardDirty = false
             }
-            isInteracting = false
+            model.isInteracting = false
 
         default:
             break
@@ -447,7 +443,7 @@ final class IslandController {
         // crosses the hot-zone boundary constantly during a drag, and the 30 ms
         // collapse would otherwise close the drop target out from under the file.
         if event.type == .leftMouseDragged, inside {
-            isInteracting = true
+            model.isInteracting = true
 
             if !dragOpenedShelf {
                 dragOpenedShelf = true
@@ -522,7 +518,7 @@ final class IslandController {
         let work = DispatchWorkItem { [weak self] in
             guard let self,
                   !self.model.locksOpen,
-                  !self.isInteracting,
+                  !self.model.isInteracting,
                   !self.inHotZone(NSEvent.mouseLocation)
             else { return }
             self.model.collapse()
