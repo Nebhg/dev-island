@@ -35,7 +35,7 @@ final class IslandController {
     private var wasInside = false
     private let hotKeys = HotKeys()
 
-    /// Set while a menu is tracking or a drag is in flight, so the 50 ms
+    /// Set while a menu is tracking or a drag is in flight, so the 30 ms
     /// collapse does not fire while the pointer is legitimately outside.
     var isInteracting = false
 
@@ -407,7 +407,19 @@ final class IslandController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.updateGeometry()
+            guard let self else { return }
+            // A display change can take the notch away — lid closed, or an
+            // external display becoming main. Hide rather than leave the panel
+            // stranded at the previous screen's geometry.
+            guard NSScreen.screens.contains(where: { $0.notchRect != nil }) else {
+                self.panel.orderOut(nil)
+                return
+            }
+            if !self.panel.isVisible {
+                FullscreenSupport.attach(self.panel)
+                self.panel.orderFrontRegardless()
+            }
+            self.updateGeometry()
         }
     }
 }

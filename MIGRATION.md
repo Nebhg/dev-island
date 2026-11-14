@@ -74,41 +74,47 @@ Spotify control unreliable on a clean install.
 <string>Dev Island controls Spotify playback so the notch can show and change the current track.</string>
 ```
 
-## 3. Build portability
+## 3. Build portability — done
 
-`build.sh:18` hardcodes `-target arm64-apple-macos26.0`. Drop the flag and let
-`swiftc` use the host triple. It only matters for Intel Macs, but it turns a
-confusing "unsupported architecture" error into either a working build or an
-honest one.
+`build.sh` now derives the triple from the host instead of hardcoding arm64:
 
-Also consider `-target`-free but keep `-O`. Debug builds are noticeably janky for
-the marquee's 30 fps `TimelineView`.
+```zsh
+TARGET="${ISLAND_TARGET:-$(uname -m)-apple-macos26.0}"
+swiftc … -target "$TARGET" …
+```
 
-## 4. Preview fixture
+`ISLAND_TARGET` overrides it when cross-compiling. `-O` is kept: debug builds are
+noticeably janky for the marquee's 30 fps `TimelineView`.
 
-`Sources/App.swift:48` hardcodes a real Eminem track for the headless preview
-(`ISLAND_RENDER`). It is a test fixture, not user-facing, but it reads as an
-accident. Replace with something neutral — title `"Preview Track"`, artist
-`"Artist"` — so nobody wonders why a song is in the source.
+## 4. Preview fixture — resolved, no action needed
 
-The `artwork: nil` in that block is correct and should stay: `ImageRenderer`
-cannot fetch, so the preview intentionally shows the no-artwork state.
+The fixture was already neutral (`"Preview Track"`, `"Preview Artist"`) when this
+was checked; the Eminem title had been replaced earlier. `artwork: nil` is correct
+and should stay: `ImageRenderer` cannot fetch, so the preview intentionally shows
+the no-artwork state.
 
-## 5. Licence
+## 5. Licence — done
 
-Add `LICENSE` with the MIT text and the year. No dependency on any GPL project,
-so no attribution obligations beyond the MIT notice itself.
+`LICENSE` added with the MIT text, 2026, copyright Ben Haras-Gummer. It matches
+the `MIT licensed` string in `Info.plist`, so the repo no longer claims a licence
+it does not contain. No dependency on any GPL project, so no attribution
+obligations beyond the MIT notice itself.
 
-## 6. No-notch guard
+## 6. No-notch guard — done
 
-`Sources/IslandController.swift:265-279` — `notchRect` returns `nil` on a Mac
-without a cutout, and every caller silently no-ops. The result is an app that
-runs, shows a menu bar item, and does nothing visible. On a display without a
-notch (external monitor as main, older MacBook, Intel) the app should say so and
-exit rather than sit there inert.
+`notchRect` returns `nil` on a Mac without a cutout, and every caller silently
+no-ops, so the app used to run, show a menu bar item, and do nothing visible.
 
-Same applies when the main display changes to one without a notch: currently the
-panel keeps whatever geometry it last had. `observeScreens` should re-evaluate.
+Two guards now:
+
+- **At launch**, `AppDelegate` checks for any screen with a notch and, if there is
+  none, shows an alert explaining why and quits instead of sitting inert. This also
+  covers clamshell use with an external display, where the notched panel is asleep.
+- **On a screen change**, `observeScreens` hides the panel when no notched screen
+  remains, and re-attaches it when one comes back, rather than leaving it stranded
+  at the previous screen's geometry.
+
+The headless preview path (`ISLAND_RENDER`) is exempt, since it needs no notch.
 
 ## 7. README
 

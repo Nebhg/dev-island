@@ -57,9 +57,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+
+        guard NSScreen.screens.contains(where: { $0.notchRect != nil }) else {
+            reportNoNotchAndQuit()
+            return
+        }
+
         controller = IslandController()
         controller?.show()
         buildStatusItem()
+    }
+
+    /// The island is anchored to a physical cutout. Without one there is nothing
+    /// to attach to, and the app would otherwise launch into a menu bar item that
+    /// silently does nothing. This also covers clamshell use with an external
+    /// display, where the notched panel is asleep and every notch lookup returns
+    /// nil.
+    private func reportNoNotchAndQuit() {
+        let alert = NSAlert()
+        alert.messageText = "Dev Island needs a notched display"
+        alert.informativeText = """
+            No screen with a camera cutout was found. Dev Island anchors itself \
+            to the notch, so it has nothing to attach to here — for example with \
+            the lid closed and an external display attached.
+            """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Quit")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+        NSApp.terminate(nil)
     }
 
     /// Headless layout preview, used while iterating on the design.

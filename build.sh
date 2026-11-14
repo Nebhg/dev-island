@@ -57,11 +57,16 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"
 
+# Follow the host architecture instead of hardcoding arm64, so an Intel Mac gets
+# either a working build or an honest error rather than a confusing "unsupported
+# architecture". Override with ISLAND_TARGET when cross-compiling.
+TARGET="${ISLAND_TARGET:-$(uname -m)-apple-macos26.0}"
+
 swiftc \
   -parse-as-library \
   -swift-version 5 \
   -O \
-  -target arm64-apple-macos26.0 \
+  -target "$TARGET" \
   -framework AppKit \
   -framework SwiftUI \
   Sources/*.swift \
