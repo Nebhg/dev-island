@@ -1,10 +1,10 @@
 # Dev Island — multi-panel plan
 
-Status: **Phases 0–3 implemented; Phases 4–6 proposed.** Phase 0 is *partial* —
-the YouTube/Chrome test and the paste-notice check were never run. §1 states facts
-verified against the source; rows marked *(Phase 1/2/3)* describe the code as it
-now stands, not the original commit. §11 records the signing setup that is in
-place.
+Status: **Phases 0–3 implemented; Phase 4 designed but not built; Phases 5–6
+proposed.** Phase 0 is *partial* — the YouTube/Chrome test and the paste-notice
+check were never run. §1 states facts verified against the source; rows marked
+*(Phase 1/2/3)* describe the code as it now stands, not the original commit. §11
+records the signing setup that is in place.
 
 | Phase | State |
 | --- | --- |
@@ -13,7 +13,7 @@ place.
 | 1.5 — rename + self-signed signing | done |
 | 2 — clipboard panel + auto-paste | done, verified by use |
 | 3 — terminal history panel | done |
-| 4 — file shelf | not built |
+| 4 — file shelf | designed (§5), not built |
 | 5 — music visual upgrade | not built |
 | 6 — browser-media fallback | only if Phase 0 demands it |
 
@@ -33,11 +33,12 @@ These matter because they invalidate some obvious approaches.
 | No SPM, no dependencies — plain `swiftc` | `build.sh` | No GRDB/Realm. Persistence must be `Codable` JSON, capped and debounced. |
 | `~/.zsh_history`: ~1,300 lines and growing, **no timestamps**, `\` continuations, non-UTF-8 bytes | measured | Recency must come from file position, not time. The parser must join continuations and decode lossily. `INC_APPEND_HISTORY` is now set in `~/.zshrc`, so the file is written per command rather than on shell exit. `EXTENDED_HISTORY` is still off. |
 | `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift:244-252` | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay permanently interactive as `NSDraggingDestination`, while the `249 pt` playing chin stays click-through. Phase 4 depends on this. |
+| Hover monitors subscribe to `.mouseMoved` + `.leftMouseDown` only **(found designing Phase 4)** | `Sources/IslandController.swift:331-337` (`installMonitors`) | A held mouse button posts `.leftMouseDragged`, not `.mouseMoved`, so a drag toward the notch produces **no** events and the island never expands. Drag-in needs its own `.leftMouseDragged` monitor gated on the drag pasteboard's `changeCount` changing *and* its types being accepted, or ordinary window drags would expand it. Risk 8. |
 | Polls only run while expanded **(Phase 1)** | `Sources/IslandController.swift:105-119`, `Sources/IslandModel.swift:137-149` | Both the Spotlight watch and `PlayerService.startPolling()` / `stopPolling()` are driven off `$expanded`. Verified: zero `osascript` spawns while closed. This is the precedent the `PanelProvider` lifecycle follows. |
 | Panel level `.mainMenu + 3`, SkyLight space attach | `Sources/FullscreenSupport.swift` | New panels inherit this; no extra work. |
-| Window frame tracks the island **(Phase 2)** | `Sources/IslandController.swift` (`updateGeometry`, `syncWindow`) | The window is resized every animation frame from an `Animatable` size probe, so it never exceeds the shape. Two things are load-bearing: the no-op guard (setting the frame re-lays out the hosting view, which re-runs the probe, which calls straight back — unguarded, it redraws at display rate forever), and critically-damped springs (any overshoot moves the whole window, not just the shape). |
+| Window frame tracks the island **(Phase 2)** | `Sources/IslandController.swift` (`updateGeometry`, `syncWindow`), `:29` (`pointerCapture`) | The window is resized every animation frame from an `Animatable` size probe, so it never exceeds the shape. Two things are load-bearing: the no-op guard (setting the frame re-lays out the hosting view, which re-runs the probe, which calls straight back — unguarded, it redraws at display rate forever), and critically-damped springs (any overshoot moves the whole window, not just the shape). `pointerCapture` separately stops a shrink from collapsing the island out from under a stationary pointer — see §2. |
 | Click-to-Spotlight (`openSpotlight()`) | `Sources/IslandView.swift` / `IslandModel.swift` | Removed in Phase 1 (`⌘Space` is the precedent); Spotlight avoidance / suppression while `SpotlightState.isOpen` is retained. |
-| 50 ms collapse on pointer exit | `Sources/IslandController.swift:242-250` (`scheduleCollapse`) | Right-click `NSMenu`s and drag-outs move the pointer outside `islandRect`. Collapse must be guarded while a menu or drag session is active. |
+| 30 ms collapse on pointer exit, with an existing `isInteracting` escape hatch | `Sources/IslandController.swift:390-402` (`scheduleCollapse`), `:40` (`isInteracting`) | Collapse is deferred 30 ms and then re-checks three conditions: `!model.locksOpen`, `!isInteracting`, `!inHotZone(mouseLocation)`. Right-click `NSMenu`s, drag-ins and drag-outs all move the pointer outside `islandRect`, so `isInteracting` is the intended guard — it is **declared and already checked**, but nothing sets it yet. Phase 4 wires it up rather than adding a new flag. |
 | `IslandPanel` overrides `canBecomeKey = true` **(Phase 2)** | `Sources/IslandController.swift:5-8` | `becomesKeyOnlyIfNeeded` is now `true`, so a click cannot take key status and swallow the synthetic `⌘V`. Auto-paste verified working by clicking a row and pasting into an editor. |
 
 Environment: Apple Silicon, macOS 26 (27.3 beta), screen 1512 × 982 @2x, notch
@@ -72,6 +73,8 @@ timer and the app idles at 5–10% CPU.
 ### Panel sizes
 
 SwiftUI animates `NotchShape` inside a non-animated `NSPanel`. The window follows the shape **frame by frame** rather than being snapped to the target: an `Animatable` size probe reports each interpolated size and the controller resizes the window to match, so the window is never larger than the island. Both springs are critically damped (`dampingFraction: 1`), because any overshoot moves the whole window rather than being clipped inside it. See risk 7 for the outstanding see-through report.
+
+**`pointerCapture` covers the one case frame-tracking alone cannot.** Switching to a shorter panel lifts the island's bottom edge above a stationary pointer, which makes `inHotZone` false and collapses the island out from under the cursor. So `model.$activePanel` snapshots the old `panel.frame` into `pointerCapture` when the pointer is inside it (line 143-146), and `handleMouse` treats that rect as inside until the pointer actually leaves it (line 348-354). It is cleared on expand and when the pointer exits the captured rect. This applies whenever a switch makes the island **shorter**; it costs nothing when it grows.
 
 The `32 pt` physical notch, `28 pt` now-playing strip, `28 pt` bottom nav, and gaps/padding consume `~116 pt` of vertical chrome on non-music panels:
 
@@ -295,18 +298,209 @@ Plain click **auto-pastes** via the same `AccessibilityPaster` path as the clipb
 
 ## 5. File shelf
 
+A **staging area in transit**, not a file manager. The job: one impossible drag
+becomes two trivial ones, with unlimited time in between. The recommended mode
+holds references rather than copies, so the disk stays clean and removing an item
+from the shelf never touches the real file.
+
+### How the two reference implementations do it
+
+**NotchNook** (closed source; behaviour from lo.cafe's own guides):
+
+- **Tray** — drag files to the top of the screen to keep them, drag them out to
+  the destination later. Files are referenced, not copied.
+- **Pockets** — shake the pointer mid-drag and a pocket opens holding the files;
+  Pro allows several, one per destination.
+- **Drop Area actions** — keep, AirDrop, convert format.
+- The shelf is a row in the expanded panel and can be toggled off entirely to
+  reclaim the space.
+
+**boring.notch** (read from source; a real subsystem — 9 services, 3 view models,
+5 views):
+
+| Concern | Their answer |
+| --- | --- |
+| Item model | `enum ShelfItemKind { file(bookmark: Data), text(string:), link(url:) }` |
+| Persistence | One JSON array in App Support, written on every mutation, survives restart |
+| File identity | **Security-scoped** bookmarks (`.withSecurityScope`), resolved on use, stale ones refreshed and written back |
+| Non-file drops | Written to `NSTemporaryDirectory()/<uuid>/`, bookmarked, flagged `isTemporary`, deleted on removal |
+| Drop in | SwiftUI `.onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data])` on the panel |
+| Drop onto the **closed** notch | `DragDetector`: global monitors on `leftMouseDown`/`leftMouseDragged`/`leftMouseUp`, comparing `NSPasteboard(name: .drag).changeCount` to distinguish a content drag from a window drag, then hit-testing the pointer against the notch rect to expand |
+| Drag out | One `NSItemProvider` per item, plus a combined provider for multi-selection |
+| Stale files | `bookmark.validate()` on launch; items whose file is gone are dropped |
+| Dedupe | By `identityKey` |
+| Not needed by us | QuickLook, thumbnail generation, AirDrop/Quick Share, image processing |
+
+### Design for Dev Island
+
 - Drop target covers the **closed island** too, not just the open panel —
   flicking a file at the notch is the point. A drag entering the hot zone
   expands straight to the Shelf panel.
-- Default: store references (`[URL]`, persisted as security-scoped bookmarks).
-  Optional mode: copy into a shelf folder, for files about to be deleted.
-- Drag **out** to Finder / Slack / a browser upload field via `NSItemProvider`.
+- **References, not copies.** `ShelfItem { path, bookmarkData, kind, added }`
+  where `kind` is `.file` / `.text` / `.link`. Dedupe by resolved path.
+  Cap ~30: this is a staging area, not a library.
+- **Plain bookmarks, not security-scoped.** boring.notch needs
+  `.withSecurityScope` only because it is sandboxed (`app-sandbox = true` in its
+  entitlements). Dev Island ships **no entitlements file** and `build.sh` signs
+  without `--entitlements`, so it is unsandboxed and a bare path would work
+  forever. A plain `bookmarkData` is still worth the ~10 lines: it resolves
+  across renames and moves, which a path never does. Store both — path for
+  display and cheap comparison, bookmark for resolution.
+- **Drag out** via `NSItemProvider` to Finder / Slack / a browser upload field.
   This is the half that makes it a tool rather than a list.
+- Click: **Reveal in Finder** — the dev-relevant action, and free.
 - Right-click: Reveal in Finder, Copy Path, Remove.
+- **Text and link drops stay as items.** boring.notch's temp-file trick exists to
+  give QuickLook something to preview inside the sandbox. We have no QuickLook
+  pane, so a text drop is just a `.text` item and a URL drop is a `.link` item.
 
-### Blocker
+Not building **Pockets** — NotchNook's shake-the-pointer-to-open-a-pocket feature
+(Pro allows several, one per destination). Shake detection plus multi-pocket
+management is a lot of machinery for a marginal gain over one shelf.
 
-`NSItemProvider`/`NSDraggingDestination` must be hosted in an `NSView` behind the SwiftUI content. Because `mouseMoved` does not fire during a drag session, keep the closed idle window (`notch + 4` wide — physical cutout only, nothing clickable behind it) permanently interactive (`ignoresMouseEvents = false`) as `NSDraggingDestination`. When music is playing while closed, the `249 pt` chin overlaps live menu-bar space and stays click-through (`ignoresMouseEvents = true`); supporting drag-in while music is playing would require a separate cutout-only drop window later. Right-click `NSMenu`s and drag-outs must also suppress `scheduleCollapse()`. See §1.
+### Storage modes — the decision that blocks Phase 4
+
+| Mode | Behaviour | Risk |
+| --- | --- | --- |
+| **References** (recommended) | Path + bookmark; shelf never owns the file | Dropping something from `/tmp` or a Downloads folder you later clean out leaves a dead entry — mitigated by validating on launch and marking dead rows |
+| Copies | Copy into `~/Library/Application Support/Dev Island/Shelf/` | Survives the source being deleted, but duplicates data silently, needs a size cap and a cleanup story, and makes "remove from shelf" ambiguous |
+
+References match both reference implementations and match the shelf's purpose.
+Copy-on-drop would only earn its place for files that are *about to be deleted*,
+which is a narrow enough case to leave out of v1.
+
+### Drag-in mechanics — and the bug this exposes
+
+`NSItemProvider`/`NSDraggingDestination` must be hosted in an `NSView` behind the
+SwiftUI content, and the window must not be click-through mid-drag. Keep the
+closed idle window (`notch + 4` wide — physical cutout only, nothing clickable
+behind it) permanently interactive (`ignoresMouseEvents = false`) as an
+`NSDraggingDestination`. When music is playing while closed, the `249 pt` chin
+overlaps live menu-bar space and stays click-through
+(`ignoresMouseEvents = true`); supporting drag-in while music is playing would
+need a separate cutout-only drop window later.
+
+**The existing hover monitor cannot see a drag.** `IslandController` monitors
+only `.mouseMoved` and `.leftMouseDown` (`installMonitors`, line 331). While a
+mouse button is held the system posts `.leftMouseDragged`, **not** `.mouseMoved`,
+so dragging a file toward the notch produces no events at all: `inHotZone` never
+becomes true and the island never expands. This is precisely why boring.notch
+built `DragDetector` around `.leftMouseDragged`. Phase 4 therefore needs a small
+detector of its own. See risk 8.
+
+Because of that, the collapse guard has to be driven explicitly. Right-click
+`NSMenu`s and drag-outs also move the pointer outside `islandRect`, and while a
+drag is in flight the pointer crosses the hot-zone boundary constantly, so without
+a guard the shelf collapses mid-drag.
+
+**That guard already exists.** `IslandController` declares
+`var isInteracting = false` (line 40) and `scheduleCollapse()` already refuses to
+collapse while it is true (line 395), alongside `model.locksOpen`. Nothing sets it
+yet. Phase 4 is therefore wiring, not new state:
+
+| Event | `isInteracting` |
+| --- | --- |
+| `draggingEntered` | `true` |
+| `performDragOperation` | `false` |
+| `draggingEnded` | `false` |
+| `leftMouseUp` (from the drag detector) | `false` — the reliable fallback |
+| `NSDraggingSource` drag-out ends | `false` |
+| Right-click `NSMenu` opens / closes | `true` / `false` |
+
+**Do not clear on `draggingExited`.** It fires every time the pointer crosses the
+hot-zone boundary mid-drag, which is constant while dragging, so clearing there
+would drop the guard at precisely the moment it is needed and collapse the island
+under the pointer. `draggingEnded` is the terminal event and is delivered even
+when the drop lands outside the island. The global `leftMouseUp` from the drag
+detector is the belt-and-braces path, since it does not depend on destination
+callbacks arriving in any particular order.
+
+### The drag detector — gate on two signals, not one
+
+A naive `.leftMouseDragged` monitor fires on every window move, so dragging a
+window across the notch would expand the island. Two independent signals, both
+required:
+
+1. **`NSPasteboard(name: .drag).changeCount` changed** since the `leftMouseDown`
+   snapshot. This is what separates "carrying content" from "moving a window",
+   and it is the part that is easy to miss.
+2. **The drag pasteboard carries a type we accept** — `.fileURL`, URL, or string.
+
+Only when both hold does the pointer position get hit-tested against the notch
+rect. boring.notch's `DragDetector` does exactly this; the `changeCount` snapshot
+on mouse-down is the load-bearing detail.
+
+**Two things to verify in the first ten minutes, before building on them:**
+
+1. **Does a global `.leftMouseDragged` monitor fire at all during a Finder drag?**
+   Finder runs its own drag loop and may swallow the event. If it does, the
+   fallback is a `CGEvent` tap, which is heavier and needs its own permission
+   path. Two minutes to check, and it decides the shape of the whole detector.
+2. **Drop on the closed idle cutout already works.** When closed and idle,
+   `ignoresMouseEvents` is `false`, so a drop landing on the `189 × 32` cutout
+   reaches `NSDraggingDestination` today. It is only the *approach* to the wider
+   `inHotZone` (`insetBy(dx: -8, dy: -4)`) that fails, because no `mouseMoved`
+   arrives to expand the island. So the detector is needed to make the target
+   bigger, not to make drops possible at all — worth confirming, since it changes
+   how much of Phase 4 is new work.
+
+### Drag-out mechanics
+
+Dragging a row out is what makes the shelf a tool rather than a list, and it
+cannot be done with SwiftUI's `.onDrag`. `.onDrag` and `.onTapGesture` compete
+for the same gesture, so click-versus-drag becomes unpredictable. The row needs a
+small `NSView` that is both click handler and `NSDraggingSource`:
+
+```
+mouseDown   → record the event, do NOT act
+mouseDragged → if hypot(dx, dy) > 3 pt, beginDraggingSession(with:source:)
+mouseUp     → if no drag started, fire the click
+```
+
+- **The 3 pt threshold** is what makes a click a click. boring.notch uses the same
+  value.
+- **Fire the click on `mouseUp`, not `mouseDown`.** boring.notch fires on
+  mouse-down unconditionally, so pressing a row and then dragging both reveals the
+  file in Finder *and* starts a drag. The threshold does not prevent this — it
+  only stops the drag from starting on a small movement. This is the one place to
+  deliberately diverge.
+- **Restrict the drag to the copy operation.** A shelf holds references, so
+  dragging a row out must never *move* the real file; without this, dropping onto
+  another volume can relocate the user's data. boring.notch exposes the same
+  behaviour as a `copyOnDrag` preference; for us it should be unconditional.
+- **One `NSItemProvider` per item**, each URL registered separately so a
+  multi-selection arrives at Finder as N files, with text items joined by
+  newlines onto a single provider.
+- **Degrade instead of failing.** If a reference no longer resolves, register the
+  display name as text so the row is still draggable rather than silently inert.
+- **Render the drag preview from the row** with `ImageRenderer` (~40 lines), so
+  the thing under the cursor looks like the row instead of a generic file icon.
+- Bind `.onDrop(…, isTargeted:)` to a highlight state: a drop zone with no
+  visual feedback reads as broken.
+- No new collapse state is needed: reuse `isInteracting` (see above) rather than
+  adding a second flag, and set it around the drag session on both the drag-in and
+  drag-out paths.
+
+### What not to take from boring.notch
+
+| Their approach | Why not |
+| --- | --- |
+| Security-scoped bookmarks, `accessSecurityScopedResource` | Pure sandbox workaround; we ship no entitlements file |
+| Temp files (`NSTemporaryDirectory()/<uuid>/`) for text and URL drops | Exists only so sandboxed QuickLook has a file to preview |
+| `ThumbnailService` + `ImageProcessingService` | Real per-item CPU cost; `NSWorkspace.icon(forFile:)` is already cached by the system |
+| QuickLook panel integration | `QLPreviewPanel` wants key window and would fight `becomesKeyOnlyIfNeeded`. Polish, high risk |
+| Shift-click range selection with an anchor | Worth it at their item counts, not in a 440 pt panel capped at ~30 |
+| Their structure — 9 services, 3 view models, 5 views, one view model at 1,113 lines | Over-built for a staging area. Ours is a store, a provider, and one view |
+| `Animation.spring(.bouncy(duration: 0.4))` | Does not transfer: their shape animates inside a fixed window, while our window resizes to follow the shape, so any overshoot moves the real window. Our critically-damped springs are a consequence of our architecture, not a style choice |
+
+### Licence boundary
+
+boring.notch is **GPL-3** and Dev Island is **MIT**. Nothing may be copied from
+it — not files, not functions, not comments. What is taken is approach: which
+system APIs to use, which signals to gate on, which thresholds work, and which
+pitfalls to avoid. Facts, API usage and standard technique are not copyrightable;
+a reimplementation written from an understanding of the behaviour is. The
+existing precedent is the notch geometry constants, taken the same way.
 
 ---
 
@@ -377,7 +571,7 @@ re-checking — it may mask the browser session.
 | 1.5 | ~~Rename to `dev.island` + `NSAppleEventsUsageDescription`; self-signed cert; `build.sh` signing; verify grants survive a rebuild~~ **done** | — |
 | 2 | ~~Clipboard provider + frequent strip + `AccessibilityPaster`~~ **done** | — |
 | 3 | ~~Terminal provider + ignore rules + redaction~~ **done** | — |
-| 4 | Shelf, drag in/out | day |
+| 4 | Shelf, drag in/out. Two 2-minute spikes first: does a global `.leftMouseDragged` monitor fire during a Finder drag (risk 10), and does drag-out work from a non-activating panel (risk 9). The drag detector (risk 8) is a prerequisite. `isInteracting` already exists and only needs wiring | day |
 | 5 | Music visuals | half day |
 | 6 | Browser fallback, only if Phase 0 demands it | half day |
 
@@ -399,7 +593,7 @@ show stale commands; it renders a notice strip when the option is missing.
    to where it was before the polling fix.
 2. **Drag-and-drop into a `.mainMenu + 3` panel.** Works, but the window must
    not be click-through mid-drag, and drag types must be registered on an
-   `NSView` behind the SwiftUI content.
+   `NSView` behind the SwiftUI content. See §5 for the full mechanics.
 3. **Provider lifecycle vs Spotlight handoff.** Both react to `expanded`.
    Suppression must stay authoritative over panel start/stop, or the island can
    start providers while Spotlight owns the screen.
@@ -432,6 +626,29 @@ show stale commands; it renders a notice strip when the option is missing.
    Fix direction if it persists: stop resizing the window per frame and instead
    put the `NSHostingView` in a container at a fixed max size, letting the window
    clip — at the cost of laying smaller panels out in a taller box.
+8. **Hover cannot detect a drag (found while designing §5, blocks Phase 4).**
+   `installMonitors` subscribes to `.mouseMoved` and `.leftMouseDown` only. While
+   a mouse button is held the system posts `.leftMouseDragged` instead of
+   `.mouseMoved`, so dragging a file toward the notch generates no events:
+   `inHotZone` never flips and the island never expands. So "flick a file at the
+   closed notch" does not work today and cannot be fixed by the drop registration
+   alone. boring.notch hit the same wall and built a dedicated `DragDetector`
+   around `.leftMouseDragged`. The gate needs **two** signals, not one: the drag
+   pasteboard's `changeCount` must have changed since the mouse-down snapshot
+   *and* its types must be one we accept — otherwise every window drag across the
+   notch expands the island. Not yet built; this is a Phase 4 prerequisite, not a
+   polish item.
+9. **Drag-out from a non-activating panel is unverified.** The shelf will start an
+   `NSDraggingSession` from a panel that never takes key status
+   (`becomesKeyOnlyIfNeeded = true`) and never activates the app. Drag sessions
+   from inactive apps are normal, but nothing here has proven it, and a failure
+   would appear only at drag time. Worth a short spike before the rest of Phase 4
+   is built on the assumption.
+10. **Global `.leftMouseDragged` may not arrive during a Finder drag.** Finder runs
+    its own drag loop, so a global monitor on `.leftMouseDragged` — the mechanism
+    the drag detector depends on — may never fire. If it does not, the fallback is
+    a `CGEvent` tap, which is heavier and needs its own permission handling. Check
+    this before writing the detector; it decides the approach. See §5.
 
 ---
 
@@ -454,10 +671,16 @@ show stale commands; it renders a notice strip when the option is missing.
 - **Terminal persistence:** none. The history is re-parsed from `~/.zsh_history` on change rather than cached in `terminal.json`.
 - **Clipboard vs terminal overlap — kept, not gated.** The clipboard captures commands as well as text, so a command you copied can appear in both panels. *Gating the clipboard to non-commands was considered and rejected:* it would delete exactly the entries the terminal can never hold — commands copied from docs, Slack or the web that have not been run yet. *Deduplicating against shell history was also rejected:* it hides a command you copied only to share, breaking the clipboard's "everything I copied" contract in a surprising way.
   If the overlap becomes annoying in use, the fix is to record the source app per entry (already read from `frontmostApplication` for the password-manager blocklist) and demote terminal-sourced copies — not to filter by kind.
+- **Shelf click vs drag:** a row is a click *or* a drag, disambiguated by a 3 pt movement threshold in a small `NSView`. The click fires on `mouseUp`, not `mouseDown`, so press-then-drag cannot also trigger the click (§5).
+- **Shelf drag operation is copy-only, unconditionally.** A shelf holds references, so dragging out must never move the real file onto another volume. boring.notch makes this a preference; here it is not negotiable.
+- **No second collapse flag:** Phase 4 wires the existing `isInteracting` rather than adding an `isStuckWhileDragging`-style flag.
+- **Not building:** Pockets, QuickLook integration, thumbnails, shift-click range selection, and shelf copies — reasons per row in §5.
 
 ### Open decisions
 
-1. **Shelf storage** — references by default, or copy files into a shelf folder?
+1. **Shelf storage** — references (recommended, §5) or copy files into a shelf
+   folder? References match both reference implementations and the shelf's
+   purpose; copies only help for files about to be deleted.
 2. **Default panel on first hover** — Music or Clipboard?
 3. **Music as chrome + one panel** — confirm the 28 pt now-playing strip is
    preferable to keeping music permanently visible.
@@ -515,16 +738,56 @@ TCC keys grants on the **designated requirement** (which embeds the leaf
 certificate hash), not the CDHash. A stable certificate gives a stable
 requirement, which is why the grant survives.
 
-### The plist landmine
+### The plist landmine (resolved)
 
-`Info.plist` has **no `NSAppleEventsUsageDescription`**. Today this is harmless
-because an Automation grant for `com.haras.dynamicisland` already exists. The
-rename and the new certificate both reset that grant — so the next Spotify call
-on a clean TCC state is the first time the app has ever had to *prompt*, and
-without the description string macOS can terminate the app instead of prompting.
-Phase 1.5 must add it:
+`Info.plist` originally had **no `NSAppleEventsUsageDescription`**, which is
+harmless only while an Automation grant already exists. Because the rename and the
+new certificate both reset that grant, the next Spotify call on a clean TCC state
+would be the first time the app had to *prompt* — and without the description
+string macOS can terminate the app instead of prompting.
+
+Phase 1.5 added it, and it is present in `Info.plist` today:
 
 ```xml
 <key>NSAppleEventsUsageDescription</key>
 <string>Dev Island controls Spotify playback so the notch can show and change the current track.</string>
 ```
+
+`CFBundleIdentifier` is `dev.island`. Note that the old identifier
+(`com.haras.dynamicisland`) is gone from the bundle but may still exist as stale
+TCC entries; those are harmless and can be left, or reset with `tccutil reset
+AppleEvents dev.island`.
+
+---
+
+## 12. Inspecting a state
+
+Every claim in §1 and §5 was checked against a running app, so the reviewer can
+re-check them the same way.
+
+**Environment variables** (read in `IslandController.init`):
+
+| Variable | Effect |
+| --- | --- |
+| `ISLAND_EXPANDED=1` | Opens the island and sets `model.locksOpen = true`, so it stays open and can be captured |
+| `ISLAND_PANEL=music\|clipboard\|terminal\|shelf` | Selects the panel before first paint |
+| `ISLAND_RENDER=1` + `ISLAND_RENDER_STATE=expanded\|playing\|wings` + `ISLAND_RENDER_PANEL=…` | Renders a static preview to PNG via `ImageRenderer` |
+
+`locksOpen` is the reason a screenshot session does not collapse under the
+pointer; it is checked in `scheduleCollapse()` alongside `isInteracting` (§1).
+
+**Gotchas that waste time:**
+
+- `ImageRenderer` cannot rasterise `ScrollView`, `LazyVStack`, or
+  `NSViewRepresentable`, so preview renders show empty lists. Use a live capture
+  for anything with rows.
+- `screencapture -x -R` fails with "could not create image from rect" while the
+  island window is up. Capture the full screen and crop.
+- Captures go black when the display sleeps or is locked (`CGDisplayIsAsleep=1`).
+- `screencapture` costs ~66–150 ms per frame, so it cannot resolve a 0.24–0.36 s
+  animation unless a temporary slowdown multiplier is in place. This is why risk 7
+  is still unresolved rather than disproved.
+- The app is single-instance via an exclusive `flock` on
+  `~/Library/Application Support/Dev Island/instance.lock`. Kill the old process
+  before relaunching, or the new one exits silently:
+  `pkill -f "DevIsland.app/Contents/MacOS/DevIsland"`.
