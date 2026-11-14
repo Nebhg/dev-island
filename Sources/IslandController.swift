@@ -41,6 +41,11 @@ final class IslandController {
     /// Set when a drag carrying content is seen, so the stale pasteboard is only
     /// cleared after a real drag rather than on every mouse move.
     private var dragPasteboardDirty = false
+
+    /// Panel that was showing before a drag auto-opened the shelf, so a cancelled
+    /// drag can put it back. Only meaningful while `dragOpenedShelf` is true.
+    private var panelBeforeDrag: PanelID?
+    private var dragOpenedShelf = false
     private let hotKeys = HotKeys()
 
     /// Set while a menu is tracking or a drag is in flight, so the 30 ms
@@ -390,6 +395,7 @@ final class IslandController {
         case .leftMouseUp:
             dragCountAtMouseDown = -1
             isInteracting = false
+            restorePanelIfDragWasCancelled()
 
         case .leftMouseDragged:
             if Self.dragProbe {
@@ -439,6 +445,18 @@ final class IslandController {
         // collapse would otherwise close the drop target out from under the file.
         if event.type == .leftMouseDragged, inside {
             isInteracting = true
+
+            // A file dragged at the notch is headed for the shelf, so show the
+            // shelf rather than whatever panel happened to be open. The previous
+            // panel is remembered in case the drag is cancelled.
+            if !dragOpenedShelf {
+                dragOpenedShelf = true
+                panelBeforeDrag = model.activePanel
+                model.shelfDidReceiveDrop = false
+                if model.activePanel != .shelf {
+                    model.selectPanel(.shelf)
+                }
+            }
         }
 
         let entering = inside && !wasInside
@@ -472,6 +490,23 @@ final class IslandController {
             } else {
                 scheduleCollapse()
             }
+        }
+    }
+
+    /// A drag that ends without a drop should not leave the shelf showing, because
+    /// the user never asked for it. The delay lets the drop handler run first: item
+    /// loading is asynchronous, so the flag is not set the instant the button comes
+    /// up.
+    private func restorePanelIfDragWasCancelled() {
+        guard dragOpenedShelf else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self else { return }
+            let dropped = self.model.shelfDidReceiveDrop
+            let previous = self.panelBeforeDrag
+            self.dragOpenedShelf = false
+            self.panelBeforeDrag = nil
+            guard !dropped, let previous, previous != .shelf else { return }
+            self.model.selectPanel(previous)
         }
     }
 

@@ -34,6 +34,12 @@ final class IslandModel: ObservableObject {
     let clipboard = ClipboardService()
     let ignoreRules = IgnoreRules()
     let terminal: TerminalService
+    let shelf = ShelfStore()
+
+    /// Set by the shelf panel when a drop lands, so the controller can tell a
+    /// completed drop from a cancelled drag and put the previous panel back.
+    var shelfDidReceiveDrop = false
+
     private var cancellables = Set<AnyCancellable>()
 
     init() {

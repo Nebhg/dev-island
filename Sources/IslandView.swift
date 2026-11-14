@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct IslandRootView: View {
     @ObservedObject var model: IslandModel
@@ -197,7 +198,7 @@ struct ExpandedPanel: View {
         case .music: MusicPanel(model: model)
         case .clipboard: ClipboardPanel(model: model, clipboard: model.clipboard)
         case .terminal: TerminalPanel(model: model, terminal: model.terminal)
-        case .shelf: PlaceholderPanel(panel: .shelf)
+        case .shelf: ShelfPanel(model: model, shelf: model.shelf)
         }
     }
 }
@@ -314,6 +315,223 @@ struct PlaceholderPanel: View {
                 .foregroundStyle(.white.opacity(0.3))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Open: shelf
+
+/// A staging area in transit. Drop a file here, drag it out somewhere else later.
+///
+/// Everything is a reference, so removing a row never touches the real file, and
+/// the drag operation is copy-only for the same reason.
+struct ShelfPanel: View {
+    @ObservedObject var model: IslandModel
+    @ObservedObject var shelf: ShelfStore
+
+    @State private var isTargeted = false
+
+    var body: some View {
+        VStack(spacing: 6) {
+            header
+            if shelf.items.isEmpty {
+                emptyState
+            } else {
+                list
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .overlay(
+            // A drop zone with no feedback reads as broken.
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(.white.opacity(isTargeted ? 0.35 : 0), lineWidth: 1)
+                .animation(.easeOut(duration: 0.12), value: isTargeted)
+        )
+        .onDrop(of: [.fileURL, .url, .text], isTargeted: $isTargeted) { providers in
+            handleDrop(providers)
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 0) {
+            Text("SHELF")
+                .font(.system(size: 8, weight: .semibold))
+                .tracking(0.7)
+                .foregroundStyle(.white.opacity(0.28))
+            Spacer(minLength: 0)
+            Text(shelf.items.isEmpty
+                 ? "drop files here"
+                 : "\(shelf.items.count) item\(shelf.items.count == 1 ? "" : "s")")
+                .font(.system(size: 8))
+                .foregroundStyle(.white.opacity(0.22))
+        }
+        .frame(height: 9)
+    }
+
+    private var list: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            LazyVStack(spacing: 1) {
+                ForEach(shelf.items) { item in
+                    ShelfRow(item: item, shelf: shelf)
+                }
+            }
+            .padding(.bottom, 2)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: isTargeted ? "tray.and.arrow.down.fill" : "tray")
+                .font(.system(size: 18))
+                .foregroundStyle(.white.opacity(isTargeted ? 0.7 : 0.25))
+            Text(isTargeted ? "Drop to park" : "Nothing on the shelf")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+            Text("Drag a file at the notch")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.3))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Returns true synchronously so AppKit accepts the drop; the items load
+    /// asynchronously because `NSItemProvider` may hand back a file promise.
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard !providers.isEmpty else { return false }
+
+        // Set before any async work: the controller checks this on mouse-up to tell
+        // a completed drop from a cancelled drag, and a late flag would make it
+        // restore the previous panel over the file that was just dropped.
+        model.shelfDidReceiveDrop = true
+
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    DispatchQueue.main.async {
+                        if url.isFileURL {
+                            shelf.addFiles([url])
+                        } else {
+                            shelf.addLink(url)
+                        }
+                    }
+                }
+            } else if provider.canLoadObject(ofClass: NSString.self) {
+                _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+                    guard let text = object as? String else { return }
+                    DispatchQueue.main.async { shelf.addText(text) }
+                }
+            }
+        }
+        return true
+    }
+}
+
+struct ShelfRow: View {
+    let item: ShelfItem
+    let shelf: ShelfStore
+
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            icon
+                .frame(width: 16, height: 16)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.name)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(item.isMissing ? 0.4 : 0.9))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.white.opacity(item.isMissing ? 0.45 : 0.3))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if hovering {
+                Button { shelf.remove(item) } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .frame(width: 14, height: 14)
+                }
+                .buttonStyle(.plain)
+                .help("Remove from shelf (the file itself is untouched)")
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 30)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(.white.opacity(hovering ? 0.06 : 0))
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { shelf.reveal(item) }
+        .contextMenu {
+            Button("Open") { shelf.open(item) }
+            if item.kind == .file {
+                Button("Reveal in Finder") { shelf.reveal(item) }
+                Button("Copy Path") { shelf.copyPath(item) }
+            }
+            Divider()
+            Button("Remove from Shelf") { shelf.remove(item) }
+        }
+        .help(item.isMissing
+              ? "The original file is gone. Remove it, or ⌥-click to keep the row."
+              : "Click to reveal in Finder · right-click for more")
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        switch item.kind {
+        case .file:
+            if let url = item.url {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .opacity(item.isMissing ? 0.4 : 1)
+            } else {
+                Image(systemName: "doc")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+        case .text:
+            Image(systemName: "text.alignleft")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.5))
+        case .link:
+            Image(systemName: "link")
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(0.5))
+        }
+    }
+
+    /// Folder and size: the two things that tell you whether this is the file you
+    /// meant, when the name alone is ambiguous.
+    private var detail: String? {
+        switch item.kind {
+        case .file:
+            guard let url = item.url else { return nil }
+            if item.isMissing { return "Missing — the file was moved or deleted" }
+            let folder = url.deletingLastPathComponent().lastPathComponent
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+            guard let size else { return folder }
+            let formatted = ByteCountFormatter.string(
+                fromByteCount: Int64(size), countStyle: .file
+            )
+            return "\(folder) · \(formatted)"
+        case .text:
+            return "Text"
+        case .link:
+            return item.payload
+        }
     }
 }
 
