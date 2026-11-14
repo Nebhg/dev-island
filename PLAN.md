@@ -1,10 +1,10 @@
 # Dev Island — multi-panel plan
 
-Status: **Phases 0–3 implemented; Phase 4 designed but not built; Phases 5–6
-proposed.** Phase 0 is *partial* — the YouTube/Chrome test and the paste-notice
-check were never run. §1 states facts verified against the source; rows marked
-*(Phase 1/2/3)* describe the code as it now stands, not the original commit. §11
-records the signing setup that is in place.
+Status: **Phases 0–3 implemented; Phase 4 partially built (drag-out outstanding);
+Phases 5–6 proposed.** Phase 0 is *partial* — the YouTube/Chrome test and the
+paste-notice check were never run. §1 states facts verified against the source;
+rows marked *(Phase 1/2/3/4)* describe the code as it now stands, not the original
+commit. §11 records the signing setup that is in place.
 
 | Phase | State |
 | --- | --- |
@@ -13,7 +13,7 @@ records the signing setup that is in place.
 | 1.5 — rename + self-signed signing | done |
 | 2 — clipboard panel + auto-paste | done, verified by use |
 | 3 — terminal history panel | done |
-| 4 — file shelf | drag-in, store, panel and drop done; drag-out remaining |
+| 4 — file shelf | store, panel, drag-in, file-only drop, pruning done; drag-out remaining |
 | 5 — music visual upgrade | not built |
 | 6 — browser-media fallback | only if Phase 0 demands it |
 
@@ -30,6 +30,7 @@ These matter because they invalidate some obvious approaches.
 | Fact | Source | Consequence |
 | --- | --- | --- |
 | `islandSize` returns `activePanel.preferredSize` while open **(Phase 1)** | `Sources/IslandModel.swift:53-61` | The resize invariant must still hold in one turn: **snap `NSPanel` frame → update `activePanel` / `islandSize` → recompute `islandRect` / `inHotZone`**, otherwise `handleMouse` sees a mismatch and collapses mid-click. |
+| `expand()` selects `defaultPanel` before flipping `expanded` **(found in Phase 4)** | `Sources/IslandModel.swift:86-90` | Anything wanting a specific panel on expand must select it **after** calling `expand()`; selecting first is silently overwritten. This cost a drop target: the shelf was selected during a drag, `expand()` replaced it with the default panel, and the drop landed on a panel with no drop handler. |
 | No SPM, no dependencies — plain `swiftc` | `build.sh` | No GRDB/Realm. Persistence must be `Codable` JSON, capped and debounced. |
 | `~/.zsh_history`: ~1,300 lines and growing, **no timestamps**, `\` continuations, non-UTF-8 bytes | measured | Recency must come from file position, not time. The parser must join continuations and decode lossily. `INC_APPEND_HISTORY` is now set in `~/.zshrc`, so the file is written per command rather than on shell exit. `EXTENDED_HISTORY` is still off. |
 | `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift:244-252` | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay permanently interactive as `NSDraggingDestination`, while the `249 pt` playing chin stays click-through. Phase 4 depends on this. |
@@ -299,9 +300,9 @@ Plain click **auto-pastes** via the same `AccessibilityPaster` path as the clipb
 ## 5. File shelf
 
 A **staging area in transit**, not a file manager. The job: one impossible drag
-becomes two trivial ones, with unlimited time in between. The recommended mode
-holds references rather than copies, so the disk stays clean and removing an item
-from the shelf never touches the real file.
+becomes two trivial ones, with unlimited time in between. It holds references
+rather than copies, so the disk stays clean and removing an item from the shelf
+never touches the real file.
 
 ### How the two reference implementations do it
 
@@ -331,20 +332,23 @@ from the shelf never touches the real file.
 | Dedupe | By `identityKey` |
 | Not needed by us | QuickLook, thumbnail generation, AirDrop/Quick Share, image processing |
 
-### Design for Dev Island
+### What is built
 
-**Built so far:** the store (path + plain bookmark, dedupe by resolved path, cap
-30, immediate 0600 write), the panel (file icon, folder, size, click-to-reveal,
-right-click menu, missing files dimmed with a reason), drop handling for file
-URLs, plain URLs and text, and drag-in that opens the shelf — with a cancelled
-drag restoring the previous panel. **Remaining:** drag-out from a row.
+| Piece | State |
+| --- | --- |
+| `ShelfStore` | Path + plain bookmark, dedupe by resolved path, cap 30, immediate `0600` write, dead references pruned on load |
+| `ShelfPanel` | File icon, name, parent folder, size; click reveals in Finder; right-click Open / Reveal / Copy Path / Remove |
+| Drop | `public.file-url` only; anything else is rejected so the drag animates back rather than being silently swallowed |
+| Drag-in | Opens the shelf, not the default panel; a cancelled drag restores the previous panel |
+| Drag-out | **Not built** — the last piece |
+
+### Design
 
 - Drop target covers the **closed island** too, not just the open panel —
   flicking a file at the notch is the point. A drag entering the hot zone
   expands straight to the Shelf panel.
-- **References, not copies.** `ShelfItem { path, bookmarkData, kind, added }`
-  where `kind` is `.file` / `.text` / `.link`. Dedupe by resolved path.
-  Cap ~30: this is a staging area, not a library.
+- **References, not copies.** `ShelfItem { path, bookmark, added }`, deduped by
+  resolved path, capped at 30: this is a staging area, not a library.
 - **Plain bookmarks, not security-scoped.** boring.notch needs
   `.withSecurityScope` only because it is sandboxed (`app-sandbox = true` in its
   entitlements). Dev Island ships **no entitlements file** and `build.sh` signs
@@ -367,16 +371,15 @@ Not building **Pockets** — NotchNook's shake-the-pointer-to-open-a-pocket feat
 (Pro allows several, one per destination). Shake detection plus multi-pocket
 management is a lot of machinery for a marginal gain over one shelf.
 
-### Storage modes — the decision that blocks Phase 4
+### Storage: references (decided)
 
-| Mode | Behaviour | Risk |
+| Mode | Behaviour | Verdict |
 | --- | --- | --- |
-| **References** (recommended) | Path + bookmark; shelf never owns the file | Dropping something from `/tmp` or a Downloads folder you later clean out leaves a dead entry — mitigated by validating on launch and marking dead rows |
-| Copies | Copy into `~/Library/Application Support/Dev Island/Shelf/` | Survives the source being deleted, but duplicates data silently, needs a size cap and a cleanup story, and makes "remove from shelf" ambiguous |
+| **References** | Path + bookmark; the shelf never owns the file | **Chosen.** Matches both reference implementations and the shelf's purpose |
+| Copies | Copy into `~/Library/Application Support/Dev Island/Shelf/` | Rejected: duplicates data silently, needs a size cap and a cleanup story, and makes "remove from shelf" ambiguous about whether the real file is affected |
 
-References match both reference implementations and match the shelf's purpose.
 Copy-on-drop would only earn its place for files that are *about to be deleted*,
-which is a narrow enough case to leave out of v1.
+which is too narrow to design around.
 
 ### Drag-in mechanics — and the bug this exposes
 
@@ -388,6 +391,16 @@ behind it) permanently interactive (`ignoresMouseEvents = false`) as an
 overlaps live menu-bar space and stays click-through
 (`ignoresMouseEvents = true`); supporting drag-in while music is playing would
 need a separate cutout-only drop window later.
+
+**Selecting the shelf is not enough — `expand()` overwrites it.** `IslandModel`
+sets `activePanel = defaultPanel` inside `expand()` before flipping `expanded`.
+Selecting the shelf on drag-in was therefore immediately undone: the island opened
+to the default panel, that panel has no drop handler, and the drop landed on
+nothing. Symptom was "the notch opens but the file panel doesn't and the file never
+appears" — two complaints with one cause. The shelf is now selected *after*
+`expand()`, and the panel to restore on cancel is computed the same way
+(`expanded ? activePanel : defaultPanel`) — what `expand()` is about to show, not
+what was left over from last time.
 
 **The existing hover monitor cannot see a drag.** `IslandController` monitors
 only `.mouseMoved` and `.leftMouseDown` (`installMonitors`, line 331). While a
@@ -442,14 +455,16 @@ intermittently for them too.
 
 **What actually works — two parts:**
 
-1. **Gate on the pasteboard's types alone.** `.fileURL`, `.URL` or `.string`
-   present means a drag is carrying something droppable.
+1. **Gate on the pasteboard's types alone** — `public.file-url`, since the shelf
+   takes files and nothing else. Text drags therefore do not open a target that
+   would refuse them.
 2. **Clear the drag pasteboard when a drag ends.** AppKit leaves the last drag's
    types behind, so after one file drag *every* window drag looked like a content
    drag — measured: 886 events across five drags, all reporting `public.file-url`,
    window drags included. `mouseMoved` never fires while a button is held, so its
    arrival proves no drag is in flight; clearing there (and once at launch) makes
-   a live drag the only time the pasteboard has types.
+   a live drag the only time the pasteboard has types. The clear is skipped unless
+   a drag was actually seen, so pointer movement does not pay an IPC round trip.
 
 Verified after the fix: 302 dragged events with empty types (window drags,
 correctly ignored) and 288 with `public.file-url` (file drags, correctly
@@ -462,7 +477,7 @@ file does.
 | --- | --- |
 | Does drag-out work from a non-activating panel? | **Yes.** `.copy` operation, payload delivered into TextEdit, app never activated (risk 9) |
 | Does a global `.leftMouseDragged` monitor fire during a Finder drag? | **Yes.** 1,028 events in one session. No `CGEvent` tap needed (risk 10) |
-| Does a drop on the closed idle cutout reach `NSDraggingDestination`? | **Not yet tested.** `ignoresMouseEvents` is `false` when closed and idle, so it should, and only the approach to the wider `inHotZone` (`insetBy(dx: -8, dy: -4)`) should fail |
+| Does a drop on the closed idle cutout reach `NSDraggingDestination`? | **Moot.** Drag-in expands the island before the pointer arrives, so the drop lands on the open panel. Only matters if the detector ever fails to fire |
 
 A standalone spike binary cannot answer the monitor question: launched from a
 terminal it does not inherit the app's TCC grant and receives nothing, which looks
@@ -596,7 +611,7 @@ re-checking — it may mask the browser session.
 | 1.5 | ~~Rename to `dev.island` + `NSAppleEventsUsageDescription`; self-signed cert; `build.sh` signing; verify grants survive a rebuild~~ **done** | — |
 | 2 | ~~Clipboard provider + frequent strip + `AccessibilityPaster`~~ **done** | — |
 | 3 | ~~Terminal provider + ignore rules + redaction~~ **done** | — |
-| 4 | Shelf. **Done:** drag-in detector (risks 8, 10 closed), store with bookmarks, panel, drop handling, drag-in opens the shelf and restores the previous panel on cancel. **Remaining:** drag-out from a row (`NSView` + `NSDraggingSource`, 3 pt threshold, copy-only) | half day left |
+| 4 | Shelf. **Done:** drag-in detector (risks 8, 10 closed), store with bookmarks and load-time pruning, panel, file-only drop handling, drag-in opens the shelf and restores the previous panel on cancel. **Remaining:** drag-out from a row (`NSView` + `NSDraggingSource`, 3 pt threshold, copy-only) | half day left |
 | 5 | Music visuals | half day |
 | 6 | Browser fallback, only if Phase 0 demands it | half day |
 
@@ -707,7 +722,15 @@ show stale commands; it renders a notice strip when the option is missing.
   dragging, so a shelf row for them was a second place to look for the same
   string. The one thing the clipboard cannot hold as a usable reference is a file.
   Non-file entries are pruned on load, and the drag detector ignores non-file
-  drags so the shelf does not open for them.
+  drags so the shelf does not open for them. The `ShelfItem` kind enum went with
+  them — the model is now `path`, `bookmark`, `added`.
+- **Shelf prunes dead references at load**, the way boring.notch validates on
+  launch, and rewrites `shelf.json` so they do not come back. Deliberately not on
+  every render: a file deleted while the panel is open should not make its row
+  vanish under the pointer mid-interaction.
+- **Shelf drag-in opens the shelf**, and a cancelled drag restores the previous
+  panel. The restore check is deferred 250 ms because item loading is
+  asynchronous and the drop flag is not set the instant the button comes up.
 - **Shelf storage: references, decided.** Path plus a plain (non-security-scoped)
   bookmark, deduped by resolved path, capped ~30. Copies were rejected: they
   duplicate data silently, need a size cap and cleanup story, and make "remove
