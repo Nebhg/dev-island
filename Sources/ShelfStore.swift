@@ -66,8 +66,10 @@ struct ShelfItem: Identifiable, Codable, Equatable {
         return URL(fileURLWithPath: payload)
     }
 
-    /// A dead reference is shown as dead rather than silently removed: a row that
-    /// vanishes on its own looks like data loss.
+    /// A dead reference, which can only happen mid-session: files whose path is
+    /// gone are pruned on load, the way boring.notch validates on launch. A file
+    /// deleted while the panel is open stays visible rather than vanishing under
+    /// the pointer.
     var isMissing: Bool {
         guard kind == .file, let url else { return false }
         return !FileManager.default.fileExists(atPath: url.path)
@@ -206,7 +208,20 @@ final class ShelfStore: ObservableObject {
     private func load() {
         guard let data = try? Data(contentsOf: url) else { return }
         guard let decoded = try? JSONDecoder().decode([ShelfItem].self, from: data) else { return }
-        items = Array(decoded.prefix(Self.cap))
+
+        // Prune references whose file is gone. A shelf full of dead rows is worse
+        // than a shorter shelf, and the bookmark cannot help once the target is
+        // deleted. Only at load: a file removed while the panel is open should not
+        // make its row disappear under the pointer mid-interaction.
+        let live = decoded.filter { item in
+            guard item.kind == .file, let fileURL = item.url else { return true }
+            return FileManager.default.fileExists(atPath: fileURL.path)
+        }
+
+        items = Array(live.prefix(Self.cap))
+        if live.count != decoded.count {
+            save()
+        }
     }
 
     private func save() {

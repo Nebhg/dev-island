@@ -446,16 +446,13 @@ final class IslandController {
         if event.type == .leftMouseDragged, inside {
             isInteracting = true
 
-            // A file dragged at the notch is headed for the shelf, so show the
-            // shelf rather than whatever panel happened to be open. The previous
-            // panel is remembered in case the drag is cancelled.
             if !dragOpenedShelf {
                 dragOpenedShelf = true
-                panelBeforeDrag = model.activePanel
+                // Remember what the user would have been looking at. If the island
+                // is closed, that is the default panel, because `expand()` is about
+                // to select it.
+                panelBeforeDrag = model.expanded ? model.activePanel : model.defaultPanel
                 model.shelfDidReceiveDrop = false
-                if model.activePanel != .shelf {
-                    model.selectPanel(.shelf)
-                }
             }
         }
 
@@ -484,6 +481,13 @@ final class IslandController {
                 refreshMousePolicy()
             }
             model.expand()
+
+            // Must come after expand(): expand() resets activePanel to defaultPanel,
+            // which silently undid selecting the shelf during a drag — so the shelf
+            // was never on screen to receive the drop.
+            if dragOpenedShelf {
+                model.selectPanel(.shelf)
+            }
         } else if model.expanded {
             if event.type == .leftMouseDown {
                 model.collapse()

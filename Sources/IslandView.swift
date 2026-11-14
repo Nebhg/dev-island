@@ -330,6 +330,11 @@ struct ShelfPanel: View {
 
     @State private var isTargeted = false
 
+    /// Shares `ISLAND_DRAG_PROBE` with the controller, so one flag traces a drag
+    /// from the monitor through to the drop landing.
+    private static let dropProbe =
+        ProcessInfo.processInfo.environment["ISLAND_DRAG_PROBE"] == "1"
+
     var body: some View {
         VStack(spacing: 6) {
             header
@@ -398,6 +403,11 @@ struct ShelfPanel: View {
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
         guard !providers.isEmpty else { return false }
 
+        if Self.dropProbe {
+            let types = providers.flatMap(\.registeredTypeIdentifiers).prefix(8)
+            NSLog("[probe] drop providers=\(providers.count) types=\(types)")
+        }
+
         // Set before any async work: the controller checks this on mouse-up to tell
         // a completed drop from a cancelled drag, and a late flag would make it
         // restore the previous panel over the file that was just dropped.
@@ -405,7 +415,10 @@ struct ShelfPanel: View {
 
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                _ = provider.loadObject(ofClass: URL.self) { url, error in
+                    if Self.dropProbe {
+                        NSLog("[probe] loaded file url=\(url?.path ?? "nil") error=\(error?.localizedDescription ?? "none")")
+                    }
                     guard let url else { return }
                     DispatchQueue.main.async {
                         if url.isFileURL {
@@ -420,6 +433,8 @@ struct ShelfPanel: View {
                     guard let text = object as? String else { return }
                     DispatchQueue.main.async { shelf.addText(text) }
                 }
+            } else if Self.dropProbe {
+                NSLog("[probe] provider had no usable type: \(provider.registeredTypeIdentifiers)")
             }
         }
         return true
