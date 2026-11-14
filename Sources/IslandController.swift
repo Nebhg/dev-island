@@ -23,6 +23,12 @@ final class IslandController {
     private var renderedSize = CGSize.zero
     private var isSyncingWindow = false
 
+    /// Latest size requested from a non-main thread, and whether a main-queue
+    /// drain is already scheduled. See `syncWindow(to:)`.
+    private let sizeLock = NSLock()
+    private var pendingSize: CGSize?
+    private var hopScheduled = false
+
     /// The area the island occupied before it shrank. Shrinking lifts the bottom
     /// edge above the pointer, which would otherwise read as "left the island" and
     /// collapse it the moment the mouse moves.
@@ -276,7 +282,39 @@ final class IslandController {
     /// Moves the window to match the shape. Called for every interpolated size
     /// while a resize animates, so the window is never larger than the island —
     /// which is what left a transparent gap showing the desktop below it.
+    ///
+    /// The probe can be invoked from SwiftUI's async display-link thread, and
+    /// AppKit traps if a window frame is set off the main thread (EXC_BREAKPOINT
+    /// in `NSWindow _setFrameCommon:`). Frames arriving there are coalesced to the
+    /// latest size and applied on the main queue, so a burst of animation frames
+    /// costs one hop and a stale frame can never land after a newer one.
     private func syncWindow(to size: CGSize) {
+        if Thread.isMainThread {
+            applyWindowSize(size)
+            return
+        }
+
+        sizeLock.lock()
+        pendingSize = size
+        let needsSchedule = !hopScheduled
+        hopScheduled = true
+        sizeLock.unlock()
+
+        guard needsSchedule else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.sizeLock.lock()
+            let latest = self.pendingSize
+            self.pendingSize = nil
+            self.hopScheduled = false
+            self.sizeLock.unlock()
+
+            guard let latest else { return }
+            self.applyWindowSize(latest)
+        }
+    }
+
+    private func applyWindowSize(_ size: CGSize) {
         guard !isSyncingWindow, let screen = targetScreen() else { return }
 
         // Land on the real size rather than the spring's last rounding artefact.
