@@ -13,7 +13,7 @@ place.
 | 1.5 — rename + self-signed signing | done |
 | 2 — clipboard panel + auto-paste | done, verified by use |
 | 3 — terminal history panel | done |
-| 4 — file shelf | **built** — store, panel, drag-in, file-only drop, pruning, drag-out |
+| 4 — file shelf | **done, verified by use** |
 | 5 — music visual upgrade | not built |
 | 6 — browser-media fallback | only if Phase 0 demands it |
 
@@ -340,7 +340,7 @@ never touches the real file.
 | `ShelfPanel` | File icon, name, parent folder, size; click reveals in Finder; right-click Open / Reveal / Copy Path / Remove |
 | Drop | `public.file-url` only; anything else is rejected so the drag animates back rather than being silently swallowed |
 | Drag-in | Opens the shelf, not the default panel; a cancelled drag restores the previous panel |
-| Drag-out | `NSView` + `NSDraggingSource`, 3 pt threshold, copy-only, icon as the drag preview |
+| Drag-out | `NSView` + `NSDraggingSource`, 3 pt threshold, copy-only, icon as the drag preview — **verified by use** |
 
 ### Design
 
@@ -486,7 +486,11 @@ terminal it does not inherit the app's TCC grant and receives nothing, which loo
 identical to Finder swallowing the events. The probe inside the signed app is the
 only reliable way to ask.
 
-### Drag-out mechanics — built
+### Drag-out mechanics — built and verified
+
+Confirmed working by use: dragging a row out delivers the file to the destination.
+The context-menu, ✕-removal and scroll-under-row paths were not separately
+reported, so treat those as unverified.
 
 Dragging a row out is what makes the shelf a tool rather than a list, and it
 cannot be done with SwiftUI's `.onDrag`. `.onDrag` and `.onTapGesture` compete
@@ -619,7 +623,7 @@ re-checking — it may mask the browser session.
 | 1.5 | ~~Rename to `dev.island` + `NSAppleEventsUsageDescription`; self-signed cert; `build.sh` signing; verify grants survive a rebuild~~ **done** | — |
 | 2 | ~~Clipboard provider + frequent strip + `AccessibilityPaster`~~ **done** | — |
 | 3 | ~~Terminal provider + ignore rules + redaction~~ **done** | — |
-| 4 | ~~Shelf: drag-in detector (risks 8, 10 closed), store with bookmarks and load-time pruning, panel, file-only drop, drag-out~~ **done** | — |
+| 4 | ~~Shelf: drag-in detector, store with bookmarks and load-time pruning, panel, file-only drop, drag-out~~ **done, verified by use** | — |
 | 5 | Music visuals | half day |
 | 6 | Browser fallback, only if Phase 0 demands it | half day |
 
