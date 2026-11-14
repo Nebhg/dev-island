@@ -20,6 +20,7 @@ final class IslandController {
     private var screenObserver: NSObjectProtocol?
     private var spotlightTimer: Timer?
     private var workspaceObserver: NSObjectProtocol?
+    private var spaceObserver: NSObjectProtocol?
     private var cancellables = Set<AnyCancellable>()
     private var wasInside = false
 
@@ -47,7 +48,7 @@ final class IslandController {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.animationBehavior = .none
-        panel.level = .statusBar
+        panel.level = .mainMenu + 3
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.ignoresMouseEvents = true
         panel.worksWhenModal = true
@@ -70,6 +71,18 @@ final class IslandController {
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             guard app?.bundleIdentifier == "com.apple.campo" else { return }
             self.hideForSpotlight()
+        }
+
+        // Entering or leaving fullscreen swaps Spaces; re-attach so the island
+        // follows instead of being left behind.
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, self.panel.isVisible else { return }
+            FullscreenSupport.attach(self.panel)
+            self.panel.orderFrontRegardless()
         }
 
         // The poll only exists while the island is actually on screen. Closed,
@@ -99,10 +112,14 @@ final class IslandController {
         if let workspaceObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
         }
+        if let spaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
+        }
         spotlightTimer?.invalidate()
     }
 
     func show() {
+        FullscreenSupport.attach(panel)
         panel.orderFrontRegardless()
     }
 
@@ -209,6 +226,7 @@ final class IslandController {
             collapseWork?.cancel()
 
             if !panel.isVisible {
+                FullscreenSupport.attach(panel)
                 panel.orderFrontRegardless()
             }
             model.expand()

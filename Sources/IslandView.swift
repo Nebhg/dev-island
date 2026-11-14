@@ -141,11 +141,12 @@ struct ExpandedContent: View {
                 ArtworkView(image: track?.artwork, size: 60, radius: 12)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(track?.title ?? "Nothing Playing")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    MarqueeText(
+                        text: track?.title ?? "Nothing Playing",
+                        width: textColumnWidth
+                    )
+                    .foregroundStyle(.white)
+                    .id(track?.title ?? "none")
 
                     Text(subtitle)
                         .font(.system(size: 12))
@@ -176,6 +177,11 @@ struct ExpandedContent: View {
         .padding(.horizontal, 26)
         .padding(.top, model.notchSize.height + 12)
         .padding(.bottom, 18)
+    }
+
+    /// Panel width minus padding, artwork, gap, transport controls and spacer.
+    private var textColumnWidth: CGFloat {
+        IslandRootView.expandedSize.width - 52 - 60 - 106 - 42
     }
 
     private var subtitle: String {
@@ -342,5 +348,61 @@ enum TimeLabel {
         guard seconds.isFinite, seconds >= 0 else { return "0:00" }
         let total = Int(seconds.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+
+/// Scrolls only when the text is wider than the space it has, and drives the
+/// offset from a clock rather than a repeatForever animation so re-renders
+/// (the progress bar ticks every second) cannot restart it.
+struct MarqueeText: View {
+    let text: String
+    let width: CGFloat
+    var font: Font = .system(size: 15, weight: .semibold)
+    var nsFont: NSFont = .systemFont(ofSize: 15, weight: .semibold)
+    var speed: CGFloat = 26
+    var gap: CGFloat = 32
+
+    @State private var start = Date()
+
+    private var textWidth: CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: nsFont]).width)
+    }
+
+    var body: some View {
+        Group {
+            if textWidth <= width {
+                Text(text)
+                    .font(font)
+                    .lineLimit(1)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                    let span = max(textWidth + gap, 1)
+                    let period = Double(span / speed)
+                    let elapsed = context.date.timeIntervalSince(start)
+                    let x = CGFloat(elapsed.truncatingRemainder(dividingBy: period)) * speed
+
+                    HStack(spacing: gap) {
+                        Text(text).font(font).fixedSize()
+                        Text(text).font(font).fixedSize()
+                    }
+                    .offset(x: -x)
+                }
+                .frame(width: width, alignment: .leading)
+                .clipped()
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black, location: 0),
+                            .init(color: .black, location: 0.92),
+                            .init(color: .clear, location: 1)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+            }
+        }
+        .frame(width: width, alignment: .leading)
     }
 }

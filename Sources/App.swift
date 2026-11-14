@@ -45,8 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.expanded = state != "wings"
         if state == "wings" || state == "playing" {
             model.nowPlaying = NowPlaying(
-                title: "Tadow",
-                artist: "Masego, FKJ",
+                title: "Must Be The Ganja (feat. Dr. Dre)",
+                artist: "Eminem",
                 album: "",
                 duration: 301,
                 elapsed: 74,
