@@ -33,11 +33,25 @@ final class IslandController {
     private var spaceObserver: NSObjectProtocol?
     private var cancellables = Set<AnyCancellable>()
     private var wasInside = false
+    /// Drag pasteboard change count sampled on mouse-down. Kept only for the
+    /// `ISLAND_DRAG_PROBE` log: the count turned out **not** to distinguish a
+    /// content drag from a window drag, so nothing gates on it. See §5.
+    private var dragCountAtMouseDown = -1
+
+    /// Set when a drag carrying content is seen, so the stale pasteboard is only
+    /// cleared after a real drag rather than on every mouse move.
+    private var dragPasteboardDirty = false
     private let hotKeys = HotKeys()
 
     /// Set while a menu is tracking or a drag is in flight, so the 30 ms
     /// collapse does not fire while the pointer is legitimately outside.
     var isInteracting = false
+
+    /// `ISLAND_DRAG_PROBE=1` logs every dragged event with both gate signals, so
+    /// risk 10 can be answered on a machine where this app holds the Accessibility
+    /// grant — a standalone binary launched from a terminal does not inherit it.
+    private static let dragProbe =
+        ProcessInfo.processInfo.environment["ISLAND_DRAG_PROBE"] == "1"
 
     init() {
         let model = IslandModel()
@@ -328,16 +342,83 @@ final class IslandController {
     // MARK: - Hover
 
     private func installMonitors() {
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown]) { [weak self] event in
+        // `.leftMouseDragged` is what makes the island reachable while a file is
+        // being dragged at it: while a button is held the system posts dragged
+        // events, not mouse-moved ones, so hover alone never fires during a drag.
+        // `.leftMouseUp` ends the drag and releases the collapse guard.
+        let mask: NSEvent.EventTypeMask = [
+            .mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp
+        ]
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             self?.handleMouse(event)
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown]) { [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
             self?.handleMouse(event)
             return event
         }
+
+        // Start from a known-empty drag pasteboard, so a drag that began before
+        // this process launched cannot be read as content.
+        if NSPasteboard(name: .drag).types?.isEmpty == false {
+            NSPasteboard(name: .drag).clearContents()
+        }
+    }
+
+    /// True when the drag pasteboard is carrying something the shelf can take.
+    ///
+    /// Deliberately does **not** compare `changeCount`. Measured on this machine
+    /// with `ISLAND_DRAG_PROBE`: one file drag produced 167 dragged frames inside
+    /// the hot zone over 3.8 s with `public.file-url` present and the count
+    /// unchanged the whole time, while another bumped the count mid-drag with
+    /// `types=[]` for a frame. The count reports when Finder *rewrites* the
+    /// pasteboard — a lazy type resolution — not when a drag begins, so gating on
+    /// it silently rejects real file drags.
+    private var isCarryingContent: Bool {
+        let accepted: [NSPasteboard.PasteboardType] = [.fileURL, .URL, .string]
+        return NSPasteboard(name: .drag).types?.contains(where: accepted.contains) ?? false
     }
 
     private func handleMouse(_ event: NSEvent) {
+        // Drag bookkeeping first, because a window drag must not reach the hover
+        // logic below at all.
+        switch event.type {
+        case .leftMouseDown:
+            // Snapshot before the drag begins: the payload is written to the drag
+            // pasteboard after this point, so a changed count means content.
+            dragCountAtMouseDown = NSPasteboard(name: .drag).changeCount
+
+        case .leftMouseUp:
+            dragCountAtMouseDown = -1
+            isInteracting = false
+
+        case .leftMouseDragged:
+            if Self.dragProbe {
+                let drag = NSPasteboard(name: .drag)
+                let types = (drag.types ?? []).map(\.rawValue).prefix(3).joined(separator: ", ")
+                NSLog("[probe] dragged content=\(isCarryingContent) count=\(drag.changeCount) base=\(dragCountAtMouseDown) inside=\(inHotZone(NSEvent.mouseLocation)) types=[\(types)]")
+            }
+            guard isCarryingContent else { return }
+            dragPasteboardDirty = true
+
+        case .mouseMoved:
+            // A move with no button held means no drag is in flight, so any drag
+            // pasteboard contents are now stale. Clear them, or every window drag
+            // that follows a file drag looks like a content drag — measured: 886
+            // events across five drags all reported `public.file-url`, window drags
+            // included.
+            //
+            // Only queried after a drag was actually seen. Touching the pasteboard
+            // on every mouse move would be an IPC round trip at pointer rate.
+            if dragPasteboardDirty {
+                NSPasteboard(name: .drag).clearContents()
+                dragPasteboardDirty = false
+            }
+            isInteracting = false
+
+        default:
+            break
+        }
+
         let point = NSEvent.mouseLocation
         var inside = inHotZone(point)
 
@@ -351,6 +432,13 @@ final class IslandController {
             } else {
                 pointerCapture = nil
             }
+        }
+
+        // Hold the island open while a content drag is over it. The pointer
+        // crosses the hot-zone boundary constantly during a drag, and the 30 ms
+        // collapse would otherwise close the drop target out from under the file.
+        if event.type == .leftMouseDragged, inside {
+            isInteracting = true
         }
 
         let entering = inside && !wasInside

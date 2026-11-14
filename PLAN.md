@@ -33,7 +33,7 @@ These matter because they invalidate some obvious approaches.
 | No SPM, no dependencies — plain `swiftc` | `build.sh` | No GRDB/Realm. Persistence must be `Codable` JSON, capped and debounced. |
 | `~/.zsh_history`: ~1,300 lines and growing, **no timestamps**, `\` continuations, non-UTF-8 bytes | measured | Recency must come from file position, not time. The parser must join continuations and decode lossily. `INC_APPEND_HISTORY` is now set in `~/.zshrc`, so the file is written per command rather than on shell exit. `EXTENDED_HISTORY` is still off. |
 | `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift:244-252` | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay permanently interactive as `NSDraggingDestination`, while the `249 pt` playing chin stays click-through. Phase 4 depends on this. |
-| Hover monitors subscribe to `.mouseMoved` + `.leftMouseDown` only **(found designing Phase 4)** | `Sources/IslandController.swift:331-337` (`installMonitors`) | A held mouse button posts `.leftMouseDragged`, not `.mouseMoved`, so a drag toward the notch produces **no** events and the island never expands. Drag-in needs its own `.leftMouseDragged` monitor gated on the drag pasteboard's `changeCount` changing *and* its types being accepted, or ordinary window drags would expand it. Risk 8. |
+| Hover monitors cover `.mouseMoved`, `.leftMouseDown`, `.leftMouseDragged`, `.leftMouseUp` **(Phase 4)** | `Sources/IslandController.swift` (`installMonitors`, `isCarryingContent`) | A held mouse button posts `.leftMouseDragged`, not `.mouseMoved`, so drag-in needs its own event type or the island never expands. The gate is the drag pasteboard's **types**, not its `changeCount`: measured, the count does not move when a drag starts. The pasteboard is cleared on `.mouseMoved` because AppKit leaves the previous drag's types behind. See §5. |
 | Polls only run while expanded **(Phase 1)** | `Sources/IslandController.swift:105-119`, `Sources/IslandModel.swift:137-149` | Both the Spotlight watch and `PlayerService.startPolling()` / `stopPolling()` are driven off `$expanded`. Verified: zero `osascript` spawns while closed. This is the precedent the `PanelProvider` lifecycle follows. |
 | Panel level `.mainMenu + 3`, SkyLight space attach | `Sources/FullscreenSupport.swift` | New panels inherit this; no extra work. |
 | Window frame tracks the island **(Phase 2)** | `Sources/IslandController.swift` (`updateGeometry`, `syncWindow`), `:29` (`pointerCapture`) | The window is resized every animation frame from an `Animatable` size probe, so it never exceeds the shape. Two things are load-bearing: the no-op guard (setting the frame re-lays out the hosting view, which re-runs the probe, which calls straight back — unguarded, it redraws at display rate forever), and critically-damped springs (any overshoot moves the whole window, not just the shape). `pointerCapture` separately stops a shrink from collapsing the island out from under a stationary pointer — see §2. |
@@ -415,34 +415,50 @@ when the drop lands outside the island. The global `leftMouseUp` from the drag
 detector is the belt-and-braces path, since it does not depend on destination
 callbacks arriving in any particular order.
 
-### The drag detector — gate on two signals, not one
+### The drag detector — built and measured
 
 A naive `.leftMouseDragged` monitor fires on every window move, so dragging a
-window across the notch would expand the island. Two independent signals, both
-required:
+window across the notch would expand the island. The gate has to tell a content
+drag from a window drag, and **the obvious signal does not work**:
 
-1. **`NSPasteboard(name: .drag).changeCount` changed** since the `leftMouseDown`
-   snapshot. This is what separates "carrying content" from "moving a window",
-   and it is the part that is easy to miss.
-2. **The drag pasteboard carries a type we accept** — `.fileURL`, URL, or string.
+> `NSPasteboard(name: .drag).changeCount` is not a drag-start signal.
 
-Only when both hold does the pointer position get hit-tested against the notch
-rect. boring.notch's `DragDetector` does exactly this; the `changeCount` snapshot
-on mouse-down is the load-bearing detail.
+Measured with `ISLAND_DRAG_PROBE` over eight drags. One file drag produced 167
+dragged frames inside the hot zone over 3.8 s with `public.file-url` present and
+the count **unchanged the whole time**, so a count-based gate silently rejected a
+real file drag. Another drag bumped the count mid-session with `types=[]` for a
+single frame — that is Finder lazily rewriting the pasteboard, not a drag
+starting. boring.notch gates on this count; on this evidence it would fail
+intermittently for them too.
 
-**Two things to verify in the first ten minutes, before building on them:**
+**What actually works — two parts:**
 
-1. **Does a global `.leftMouseDragged` monitor fire at all during a Finder drag?**
-   Finder runs its own drag loop and may swallow the event. If it does, the
-   fallback is a `CGEvent` tap, which is heavier and needs its own permission
-   path. Two minutes to check, and it decides the shape of the whole detector.
-2. **Drop on the closed idle cutout already works.** When closed and idle,
-   `ignoresMouseEvents` is `false`, so a drop landing on the `189 × 32` cutout
-   reaches `NSDraggingDestination` today. It is only the *approach* to the wider
-   `inHotZone` (`insetBy(dx: -8, dy: -4)`) that fails, because no `mouseMoved`
-   arrives to expand the island. So the detector is needed to make the target
-   bigger, not to make drops possible at all — worth confirming, since it changes
-   how much of Phase 4 is new work.
+1. **Gate on the pasteboard's types alone.** `.fileURL`, `.URL` or `.string`
+   present means a drag is carrying something droppable.
+2. **Clear the drag pasteboard when a drag ends.** AppKit leaves the last drag's
+   types behind, so after one file drag *every* window drag looked like a content
+   drag — measured: 886 events across five drags, all reporting `public.file-url`,
+   window drags included. `mouseMoved` never fires while a button is held, so its
+   arrival proves no drag is in flight; clearing there (and once at launch) makes
+   a live drag the only time the pasteboard has types.
+
+Verified after the fix: 302 dragged events with empty types (window drags,
+correctly ignored) and 288 with `public.file-url` (file drags, correctly
+accepted), and the user confirmed a window no longer opens the island while a
+file does.
+
+**Spike status (14 Nov):**
+
+| Question | Result |
+| --- | --- |
+| Does drag-out work from a non-activating panel? | **Yes.** `.copy` operation, payload delivered into TextEdit, app never activated (risk 9) |
+| Does a global `.leftMouseDragged` monitor fire during a Finder drag? | **Yes.** 1,028 events in one session. No `CGEvent` tap needed (risk 10) |
+| Does a drop on the closed idle cutout reach `NSDraggingDestination`? | **Not yet tested.** `ignoresMouseEvents` is `false` when closed and idle, so it should, and only the approach to the wider `inHotZone` (`insetBy(dx: -8, dy: -4)`) should fail |
+
+A standalone spike binary cannot answer the monitor question: launched from a
+terminal it does not inherit the app's TCC grant and receives nothing, which looks
+identical to Finder swallowing the events. The probe inside the signed app is the
+only reliable way to ask.
 
 ### Drag-out mechanics
 
@@ -571,7 +587,7 @@ re-checking — it may mask the browser session.
 | 1.5 | ~~Rename to `dev.island` + `NSAppleEventsUsageDescription`; self-signed cert; `build.sh` signing; verify grants survive a rebuild~~ **done** | — |
 | 2 | ~~Clipboard provider + frequent strip + `AccessibilityPaster`~~ **done** | — |
 | 3 | ~~Terminal provider + ignore rules + redaction~~ **done** | — |
-| 4 | Shelf, drag in/out. Two 2-minute spikes first: does a global `.leftMouseDragged` monitor fire during a Finder drag (risk 10), and does drag-out work from a non-activating panel (risk 9). The drag detector (risk 8) is a prerequisite. `isInteracting` already exists and only needs wiring | day |
+| 4 | Shelf. Drag-in detector **done** (risks 8, 10 closed); drag-out from a non-activating panel **confirmed** (risk 9). Remaining: shelf store, panel UI, drop handling, drag-out rows | day |
 | 5 | Music visuals | half day |
 | 6 | Browser fallback, only if Phase 0 demands it | half day |
 
@@ -626,29 +642,35 @@ show stale commands; it renders a notice strip when the option is missing.
    Fix direction if it persists: stop resizing the window per frame and instead
    put the `NSHostingView` in a container at a fixed max size, letting the window
    clip — at the cost of laying smaller panels out in a taller box.
-8. **Hover cannot detect a drag (found while designing §5, blocks Phase 4).**
-   `installMonitors` subscribes to `.mouseMoved` and `.leftMouseDown` only. While
-   a mouse button is held the system posts `.leftMouseDragged` instead of
-   `.mouseMoved`, so dragging a file toward the notch generates no events:
-   `inHotZone` never flips and the island never expands. So "flick a file at the
-   closed notch" does not work today and cannot be fixed by the drop registration
-   alone. boring.notch hit the same wall and built a dedicated `DragDetector`
-   around `.leftMouseDragged`. The gate needs **two** signals, not one: the drag
-   pasteboard's `changeCount` must have changed since the mouse-down snapshot
-   *and* its types must be one we accept — otherwise every window drag across the
-   notch expands the island. Not yet built; this is a Phase 4 prerequisite, not a
-   polish item.
-9. **Drag-out from a non-activating panel is unverified.** The shelf will start an
-   `NSDraggingSession` from a panel that never takes key status
-   (`becomesKeyOnlyIfNeeded = true`) and never activates the app. Drag sessions
-   from inactive apps are normal, but nothing here has proven it, and a failure
-   would appear only at drag time. Worth a short spike before the rest of Phase 4
-   is built on the assumption.
-10. **Global `.leftMouseDragged` may not arrive during a Finder drag.** Finder runs
-    its own drag loop, so a global monitor on `.leftMouseDragged` — the mechanism
-    the drag detector depends on — may never fire. If it does not, the fallback is
-    a `CGEvent` tap, which is heavier and needs its own permission handling. Check
-    this before writing the detector; it decides the approach. See §5.
+8. **Hover cannot detect a drag (resolved, 14 Nov).** `installMonitors` used to
+   subscribe to `.mouseMoved` and `.leftMouseDown` only. While a button is held the
+   system posts `.leftMouseDragged` instead of `.mouseMoved`, so dragging a file
+   toward the notch generated no events at all. The monitor now includes
+   `.leftMouseDragged` and `.leftMouseUp`, gated on the drag pasteboard's types, and
+   a content drag over the island holds it open through the existing
+   `isInteracting`. Verified: a window drag across the notch leaves it closed, a
+   file drag opens it. See §5.
+9. **Drag-out from a non-activating panel (resolved by spike, 14 Nov).** Confirmed
+   working: a spike panel with the island's exact window configuration
+   (`.nonactivatingPanel`, `canBecomeKey = true`, `becomesKeyOnlyIfNeeded = true`,
+   level `.mainMenu + 3`, copy-only operation) started a drag session and delivered
+   its payload into TextEdit — `session ended, operation=1` (`.copy`). The menu bar
+   stayed on TextEdit throughout, so the panel never activated the app. Drag-out is
+   not a risk; build it.
+10. **Global `.leftMouseDragged` during a Finder drag (resolved, 14 Nov).**
+    Confirmed working: 1,028 dragged events arrived during Finder file drags with
+    `public.file-url` present. No `CGEvent` tap is needed, and neither is its extra
+    permission story.
+    The standalone spike could not answer this and must not be trusted for it: a
+    binary launched from a terminal does not inherit the app's TCC grant and
+    receives nothing, which is indistinguishable from Finder swallowing the events.
+    `AXIsProcessTrusted`/`CGPreflightListenEventAccess` reported `true` in the
+    development shell while the terminal-launched binary still saw no events, and
+    synthetic events cannot substitute because `CGEvent`-posted events are filtered
+    from global monitors. The `ISLAND_DRAG_PROBE` inside the signed app is the only
+    reliable way to ask.
+    The real trap was in the gate, not the monitor: see §5 for why `changeCount` is
+    not a drag-start signal.
 
 ---
 
@@ -671,6 +693,12 @@ show stale commands; it renders a notice strip when the option is missing.
 - **Terminal persistence:** none. The history is re-parsed from `~/.zsh_history` on change rather than cached in `terminal.json`.
 - **Clipboard vs terminal overlap — kept, not gated.** The clipboard captures commands as well as text, so a command you copied can appear in both panels. *Gating the clipboard to non-commands was considered and rejected:* it would delete exactly the entries the terminal can never hold — commands copied from docs, Slack or the web that have not been run yet. *Deduplicating against shell history was also rejected:* it hides a command you copied only to share, breaking the clipboard's "everything I copied" contract in a surprising way.
   If the overlap becomes annoying in use, the fix is to record the source app per entry (already read from `frontmostApplication` for the password-manager blocklist) and demote terminal-sourced copies — not to filter by kind.
+- **Shelf storage: references, decided.** Path plus a plain (non-security-scoped)
+  bookmark, deduped by resolved path, capped ~30. Copies were rejected: they
+  duplicate data silently, need a size cap and cleanup story, and make "remove
+  from shelf" ambiguous about whether the real file is affected. Copies would only
+  earn their place for files about to be deleted, which is too narrow to design
+  around.
 - **Shelf click vs drag:** a row is a click *or* a drag, disambiguated by a 3 pt movement threshold in a small `NSView`. The click fires on `mouseUp`, not `mouseDown`, so press-then-drag cannot also trigger the click (§5).
 - **Shelf drag operation is copy-only, unconditionally.** A shelf holds references, so dragging out must never move the real file onto another volume. boring.notch makes this a preference; here it is not negotiable.
 - **No second collapse flag:** Phase 4 wires the existing `isInteracting` rather than adding an `isStuckWhileDragging`-style flag.
@@ -678,11 +706,8 @@ show stale commands; it renders a notice strip when the option is missing.
 
 ### Open decisions
 
-1. **Shelf storage** — references (recommended, §5) or copy files into a shelf
-   folder? References match both reference implementations and the shelf's
-   purpose; copies only help for files about to be deleted.
-2. **Default panel on first hover** — Music or Clipboard?
-3. **Music as chrome + one panel** — confirm the 28 pt now-playing strip is
+1. **Default panel on first hover** — Music or Clipboard?
+2. **Music as chrome + one panel** — confirm the 28 pt now-playing strip is
    preferable to keeping music permanently visible.
 
 ---
@@ -772,6 +797,7 @@ re-check them the same way.
 | `ISLAND_EXPANDED=1` | Opens the island and sets `model.locksOpen = true`, so it stays open and can be captured |
 | `ISLAND_PANEL=music\|clipboard\|terminal\|shelf` | Selects the panel before first paint |
 | `ISLAND_RENDER=1` + `ISLAND_RENDER_STATE=expanded\|playing\|wings` + `ISLAND_RENDER_PANEL=…` | Renders a static preview to PNG via `ImageRenderer` |
+| `ISLAND_DRAG_PROBE=1` | Logs every `.leftMouseDragged` with both gate inputs (`content`, `count`, `base`, `inside`, `types`) to stderr. The only reliable way to inspect drag events — a standalone binary launched from a terminal does not inherit the app's TCC grant and sees nothing |
 
 `locksOpen` is the reason a screenshot session does not collapse under the
 pointer; it is checked in `scheduleCollapse()` alongside `isInteracting` (§1).
