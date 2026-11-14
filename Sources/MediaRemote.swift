@@ -65,7 +65,7 @@ final class MediaRemote {
     private init() {
         let path = "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
         guard let handle = dlopen(path, RTLD_NOW) else {
-            NSLog("DynamicIsland: MediaRemote unavailable")
+            NSLog("DevIsland: MediaRemote unavailable")
             return
         }
         if let symbol = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo") {

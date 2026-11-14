@@ -9,16 +9,41 @@ enum PreviewMode {
 
 @main
 struct IslandApp {
+    /// Held for the process lifetime; closing it would release the lock.
+    private static var instanceLock: Int32 = -1
+
     static func main() {
-        // Only ever one island.
-        if NSRunningApplication.runningApplications(withBundleIdentifier: "com.haras.dynamicisland").count > 1 {
-            exit(0)
-        }
+        guard acquireInstanceLock() else { exit(0) }
+
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
         app.run()
+    }
+
+    /// Exclusive `flock` so only one island can ever run.
+    ///
+    /// This used to ask `NSRunningApplication`, which is the wrong tool: it
+    /// depends on LaunchServices having registered the process, so two launches
+    /// close together can both see zero others and both proceed — two panels
+    /// fighting over the notch. A kernel file lock is atomic, so the race cannot
+    /// come back. Fails open if the lock file cannot be created, because refusing
+    /// to start is worse than a duplicate.
+    private static func acquireInstanceLock() -> Bool {
+        let base = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Dev Island", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+
+        let fd = open(base.appendingPathComponent("instance.lock").path, O_CREAT | O_RDWR, 0o644)
+        guard fd >= 0 else { return true }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            close(fd)
+            return false
+        }
+        instanceLock = fd
+        return true
     }
 }
 
@@ -42,11 +67,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PreviewMode.active = true
         let model = IslandModel()
         let state = ProcessInfo.processInfo.environment["ISLAND_RENDER_STATE"] ?? "expanded"
+        if let panel = ProcessInfo.processInfo.environment["ISLAND_RENDER_PANEL"],
+           let selected = PanelID(rawValue: panel) {
+            model.activePanel = selected
+        }
         model.expanded = state != "wings"
         if state == "wings" || state == "playing" {
             model.nowPlaying = NowPlaying(
-                title: "Must Be The Ganja (feat. Dr. Dre)",
-                artist: "Eminem",
+                title: "Preview Track (a long title that has to scroll)",
+                artist: "Preview Artist",
                 album: "",
                 duration: 301,
                 elapsed: 74,
@@ -55,11 +84,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 artwork: nil
             )
         }
-        _ = model.islandSize
+        let size = model.islandSize
         let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let canvas = IslandRootView(model: model)
             .environment(\.colorScheme, dark ? .dark : .light)
-            .frame(width: 620, height: 260)
+            .frame(width: size.width, height: size.height)
             .background(Color(red: 0.09, green: 0.09, blue: 0.11))
         let renderer = ImageRenderer(content: canvas)
         renderer.scale = 2
@@ -68,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:])
         else {
-            NSLog("DynamicIsland: preview render failed")
+            NSLog("DevIsland: preview render failed")
             return
         }
         try? png.write(to: URL(fileURLWithPath: path))
@@ -76,11 +105,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "capsule.portrait", accessibilityDescription: "Dynamic Island")
+        item.button?.image = NSImage(systemSymbolName: "capsule.portrait", accessibilityDescription: "Dev Island")
 
         let menu = NSMenu()
+        menu.delegate = self
         menu.addItem(makeItem("Expand Island", #selector(toggle)))
         menu.addItem(makeItem("Collapse Island", #selector(collapse)))
+        menu.addItem(.separator())
+
+        let defaultItem = NSMenuItem(title: "Default Panel", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for panel in PanelID.allCases {
+            let entry = NSMenuItem(
+                title: panel.title,
+                action: #selector(setDefaultPanel(_:)),
+                keyEquivalent: ""
+            )
+            entry.target = self
+            entry.representedObject = panel.rawValue
+            submenu.addItem(entry)
+        }
+        defaultItem.submenu = submenu
+        menu.addItem(defaultItem)
+
+        menu.addItem(.separator())
+        menu.addItem(makeItem("Edit Ignore Rules…", #selector(editIgnoreRules)))
         menu.addItem(.separator())
         menu.addItem(makeItem("Quit", #selector(quit)))
         item.menu = menu
@@ -96,4 +145,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggle() { controller?.toggleExpanded() }
     @objc private func collapse() { controller?.collapse() }
     @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func editIgnoreRules() { controller?.editIgnoreRules() }
+
+    @objc private func setDefaultPanel(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let panel = PanelID(rawValue: raw)
+        else { return }
+        controller?.defaultPanel = panel
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    /// Checkmarks are refreshed on open rather than kept in sync.
+    func menuWillOpen(_ menu: NSMenu) {
+        let current = controller?.defaultPanel
+        for item in menu.items where item.action == #selector(setDefaultPanel(_:)) {
+            item.state = (item.representedObject as? String) == current?.rawValue ? .on : .off
+        }
+        for item in menu.items.first(where: { $0.title == "Default Panel" })?.submenu?.items ?? [] {
+            item.state = (item.representedObject as? String) == current?.rawValue ? .on : .off
+        }
+    }
 }

@@ -7,23 +7,42 @@ final class IslandModel: ObservableObject {
     @Published var nowPlaying: NowPlaying?
     @Published var notchSize = CGSize(width: 185, height: 32)
 
+    /// Which panel the island is showing. Resets to `defaultPanel` each time it
+    /// opens, so the island always lands where it was configured to.
+    @Published var activePanel = PanelID.music
+
+    /// The panel opened on hover. Persisted.
+    @Published var defaultPanel: PanelID {
+        didSet { UserDefaults.standard.set(defaultPanel.rawValue, forKey: Self.defaultPanelKey) }
+    }
+
+    /// Set by a provider when its panel is degraded — e.g. terminal history
+    /// needing `setopt INC_APPEND_HISTORY`. Rendered as a strip above content.
+    @Published var panelNotice: String?
+
+    private static let defaultPanelKey = "defaultPanel"
+
     /// Set by the screenshot/launch flag so the island does not close while
     /// the pointer is elsewhere.
     var locksOpen = false
 
-    /// While true, hovering will not reopen the island. Set when handing off to
-    /// Spotlight, because the pointer is still sitting on the island.
+    /// While true, hovering will not reopen the island. Set while Spotlight is
+    /// open, because the pointer is still sitting on the island.
     var suppressed = false
 
-    /// Hides the whole window while Spotlight is up — a status-bar-level window
-    /// would otherwise sit on top of the panel.
-    var onHandOff: (() -> Void)?
-
     let player = PlayerService()
-
+    let clipboard = ClipboardService()
+    let ignoreRules = IgnoreRules()
+    let terminal: TerminalService
     private var cancellables = Set<AnyCancellable>()
 
     init() {
+        let stored = UserDefaults.standard.string(forKey: Self.defaultPanelKey)
+        let initial = stored.flatMap(PanelID.init(rawValue:)) ?? .music
+        self.defaultPanel = initial
+        self.activePanel = initial
+        self.terminal = TerminalService(rules: ignoreRules)
+
         player.$nowPlaying
             .receive(on: RunLoop.main)
             .sink { [weak self] track in self?.nowPlaying = track }
@@ -37,7 +56,7 @@ final class IslandModel: ObservableObject {
     ///          which is real menu-bar screen but reads as one black band.
     /// Expanded: a black panel flush with the top edge, NotchNook style.
     var islandSize: CGSize {
-        if expanded { return IslandRootView.expandedSize }
+        if expanded { return activePanel.preferredSize }
         // BoringNotch's "chin": the closed notch is 2pt wider than the cutout,
         // and grows by 2*(height-12)+20 while music plays.
         let base = notchSize.width + 4
@@ -49,10 +68,18 @@ final class IslandModel: ObservableObject {
     /// The island is always pinned to the top edge of the display.
     var islandTopGap: CGFloat { 0 }
 
+    // MARK: - Panels
+
+    func selectPanel(_ panel: PanelID) {
+        guard panel != activePanel else { return }
+        activePanel = panel
+    }
+
     // MARK: - Presentation
 
     func expand() {
         guard !expanded, !suppressed else { return }
+        activePanel = defaultPanel
         expanded = true
     }
 
@@ -65,15 +92,43 @@ final class IslandModel: ObservableObject {
         expanded ? collapse() : expand()
     }
 
-    /// Clicking the island hands off to Spotlight / Siri search. The island
-    /// gets out of the way first, otherwise it floats above the panel.
-    func openSpotlight() {
-        suppressed = true
+    /// Moves to the next or previous panel, wrapping at the ends.
+    func cyclePanel(by step: Int) {
+        let all = PanelID.allCases
+        guard let index = all.firstIndex(of: activePanel) else { return }
+        let next = (index + step + all.count) % all.count
+        selectPanel(all[next])
+    }
+
+    // MARK: - Clipboard
+
+    /// Copies an entry back and, when asked and permitted, pastes it into whatever
+    /// app had focus. The panel never activates the app, so focus is already where
+    /// the user left it — there is no focus to restore.
+    func pasteClipboard(_ entry: ClipEntry, autoPaste: Bool) {
+        guard clipboard.write(entry) else { return }
+        deliverPaste(autoPaste: autoPaste)
+    }
+
+    /// Terminal commands paste with the trailing newline stripped: history is full
+    /// of one-shot destructive commands, and a stray Return would run one.
+    func pasteTerminal(_ entry: TerminalEntry, autoPaste: Bool) {
+        var text = entry.command
+        while text.hasSuffix("\n") || text.hasSuffix("\r") { text.removeLast() }
+        guard clipboard.writeText(text) else { return }
+        deliverPaste(autoPaste: autoPaste)
+    }
+
+    private func deliverPaste(autoPaste: Bool) {
         collapse()
-        onHandOff?()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            guard let url = URL(string: "spotlight://") else { return }
-            NSWorkspace.shared.open(url)
+        guard autoPaste, clipboard.canAutoPaste else { return }
+        // Next runloop turn: the pasteboard write and the window teardown both have
+        // to land before the keystroke, or the target app pastes the old contents.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            guard let self else { return }
+            if !AccessibilityPaster.postPaste() {
+                self.panelNotice = "Grant Accessibility to paste directly."
+            }
         }
     }
 }
@@ -105,14 +160,29 @@ final class PlayerService: ObservableObject {
             queue: .main
         ) { [weak self] _ in self?.refresh() })
 
-        poll = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            self?.refresh()
-        }
+        // No timer here: the controller starts polling when the island opens
+        // and stops it when it closes, so a closed island costs nothing.
         refresh()
     }
 
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
+        poll?.invalidate()
+    }
+
+    /// Runs the 1.5 s AppleScript refresh. Called only while the island is open.
+    func startPolling() {
+        guard poll == nil else { return }
+        poll = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.refresh()
+        }
+        // Don't show stale state for up to 1.5 s after opening.
+        refresh()
+    }
+
+    func stopPolling() {
+        poll?.invalidate()
+        poll = nil
     }
 
     func refresh() {

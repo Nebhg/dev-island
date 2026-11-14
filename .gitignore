@@ -1,5 +1,5 @@
 # Build output
-DynamicIsland.app/
+DevIsland.app/
 *.o
 .build/
 DerivedData/

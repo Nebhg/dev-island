@@ -4,7 +4,21 @@ import SwiftUI
 struct IslandRootView: View {
     @ObservedObject var model: IslandModel
 
-    static let expandedSize = CGSize(width: 440, height: 162)
+    /// Called with every interpolated size while a resize animates, so the window
+    /// can track the shape exactly. Without this the window is pre-sized to the
+    /// target, leaving a transparent gap below the still-growing island.
+    var onSizeChange: ((CGSize) -> Void)?
+
+    /// Shape animation. Both are critically damped: the window follows the shape
+    /// frame by frame, so any spring overshoot shows up as the whole window
+    /// bouncing. Bounce is fine for a shape inside a fixed frame, not for a frame
+    /// that is itself resizing.
+    static let expandAnimation = Animation.spring(response: 0.36, dampingFraction: 1)
+    static let collapseAnimation = Animation.spring(response: 0.24, dampingFraction: 1)
+
+    private var sizeAnimation: Animation {
+        model.expanded ? Self.expandAnimation : Self.collapseAnimation
+    }
 
     private var size: CGSize { model.islandSize }
 
@@ -22,13 +36,14 @@ struct IslandRootView: View {
                 shape.fill(.black)
 
                 if model.expanded {
-                    ExpandedContent(model: model)
+                    ExpandedPanel(model: model)
                         .transition(.opacity)
                 } else {
                     WingContent(model: model)
                 }
             }
             .frame(width: size.width, height: size.height, alignment: .top)
+            .modifier(SizeProbe(size: size, onSizeChange: onSizeChange))
             .clipShape(shape)
             // Straightens the top edge against the bezel, exactly like BoringNotch.
             .overlay(alignment: .top) {
@@ -39,20 +54,34 @@ struct IslandRootView: View {
                     .allowsHitTesting(false)
             }
             .contentShape(shape)
-            .onTapGesture { model.openSpotlight() }
-            .shadow(
-                color: .black.opacity(model.expanded ? 0.5 : 0),
-                radius: 8,
-                x: 0,
-                y: 4
-            )
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: size)
+            // No tap action: the closed island expands on hover before a click
+            // can land, so a click-to-Spotlight gesture could never fire. ⌘Space
+            // is the system precedent anyway.
+            .animation(sizeAnimation, value: size)
             .animation(.easeInOut(duration: 0.18), value: model.expanded)
 
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
+}
+
+/// Reports every interpolated size while a resize animates, so the window can
+/// follow the shape frame by frame. Animatable rather than a `GeometryReader`
+/// because layout callbacks only ever see the final value, not the animation.
+struct SizeProbe: ViewModifier, Animatable {
+    var size: CGSize
+    var onSizeChange: ((CGSize) -> Void)?
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(size.width, size.height) }
+        set {
+            size = CGSize(width: newValue.first, height: newValue.second)
+            onSizeChange?(size)
+        }
+    }
+
+    func body(content: Content) -> some View { content }
 }
 
 /// Rounded on all four corners; the top pair is much tighter so the shape still
@@ -128,15 +157,496 @@ struct WingContent: View {
     }
 }
 
-// MARK: - Open
+// MARK: - Open: panel shell
 
-struct ExpandedContent: View {
+/// Hosts the active panel: optional now-playing strip, optional notice, the
+/// panel body, and the navigation row.
+struct ExpandedPanel: View {
+    @ObservedObject var model: IslandModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if model.activePanel.showsPlayerStrip, model.nowPlaying != nil {
+                PlayerStrip(model: model)
+                Color.clear.frame(height: 6)
+            }
+
+            if let notice = model.panelNotice {
+                NoticeStrip(text: notice)
+                Color.clear.frame(height: 6)
+            }
+
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Color.clear.frame(height: 4)
+            PanelNav(model: model)
+        }
+        .padding(.top, model.notchSize.height + 4)
+        .padding(.bottom, 6)
+        // NotchShape tapers inward by topRadius on each side, so the body is
+        // narrower than the panel. Content has to clear that or it gets clipped.
+        .padding(.horizontal, 24)
+        // Switching panel changes the window size; let the content follow.
+        .animation(.easeInOut(duration: 0.16), value: model.activePanel)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch model.activePanel {
+        case .music: MusicPanel(model: model)
+        case .clipboard: ClipboardPanel(model: model, clipboard: model.clipboard)
+        case .terminal: TerminalPanel(model: model, terminal: model.terminal)
+        case .shelf: PlaceholderPanel(panel: .shelf)
+        }
+    }
+}
+
+/// Compact now-playing row shown above every non-music panel, so playback stays
+/// reachable without giving up the width a list needs. Only drawn when there is
+/// actually a track, so an idle island keeps the full panel height for content.
+struct PlayerStrip: View {
     @ObservedObject var model: IslandModel
 
     private var track: NowPlaying? { model.nowPlaying }
 
     var body: some View {
-        VStack(spacing: 0) {
+        GeometryReader { geometry in
+            HStack(spacing: 8) {
+                ArtworkView(image: track?.artwork, size: 20, radius: 5)
+
+                MarqueeText(
+                    text: track?.title ?? "",
+                    width: max(geometry.size.width - 74, 60),
+                    font: .system(size: 12, weight: .medium),
+                    nsFont: .systemFont(ofSize: 12, weight: .medium),
+                    speed: 20,
+                    gap: 24
+                )
+                .foregroundStyle(.white.opacity(0.9))
+                .id(track?.title ?? "none")
+
+                Spacer(minLength: 0)
+
+                Button { model.player.toggle() } label: {
+                    Image(systemName: track?.isPlaying == true ? "pause.fill" : "play.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 8)
+            .frame(width: geometry.size.width, height: 26, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(.white.opacity(0.055))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(.white.opacity(0.09), lineWidth: 0.5)
+                    )
+            )
+        }
+        .frame(height: 26)
+    }
+}
+
+/// Shown when a provider reports its panel is degraded rather than broken.
+struct NoticeStrip: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 9, weight: .bold))
+            Text(text)
+                .font(.system(size: 10))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(.orange.opacity(0.85))
+        .frame(height: 14)
+    }
+}
+
+struct PanelNav: View {
+    @ObservedObject var model: IslandModel
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ForEach(PanelID.allCases) { panel in
+                Button {
+                    model.selectPanel(panel)
+                } label: {
+                    Image(systemName: panel.symbol)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(
+                            .white.opacity(model.activePanel == panel ? 0.95 : 0.28)
+                        )
+                        .frame(width: 24, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(panel.title)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 18)
+    }
+}
+
+/// Stand-in for the panels arriving in phases 3–4.
+struct PlaceholderPanel: View {
+    let panel: PanelID
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: panel.symbol)
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(.white.opacity(0.25))
+            Text(panel.title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+            Text("Not wired up yet")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.3))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Open: clipboard
+
+struct ClipboardPanel: View {
+    @ObservedObject var model: IslandModel
+    @ObservedObject var clipboard: ClipboardService
+
+    private var entries: [ClipEntry] { clipboard.entries }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            if !entries.isEmpty {
+                header
+                chipRow
+            }
+
+            if entries.isEmpty {
+                emptyState
+            } else {
+                list
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// A label makes the strip read as a deliberate section rather than three
+    /// stray strings floating above the list.
+    private var header: some View {
+        HStack(spacing: 0) {
+            Text("FREQUENT")
+                .font(.system(size: 8, weight: .semibold))
+                .tracking(0.7)
+                .foregroundStyle(.white.opacity(0.28))
+            Spacer(minLength: 0)
+        }
+        .frame(height: 9)
+    }
+
+    /// Most-used entries, one click away. Equal widths and one line each: uneven
+    /// chip sizes were what made the old strip look messy.
+    private var chipRow: some View {
+        HStack(spacing: 6) {
+            ForEach(clipboard.frequent()) { entry in
+                Button { paste(entry) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: entry.kind.symbol)
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.45))
+
+                        Text(entry.preview)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.82))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 7)
+                    .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(.white.opacity(0.055))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .strokeBorder(.white.opacity(0.07), lineWidth: 0.5)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Paste “\(entry.preview.prefix(80))”")
+            }
+        }
+        .frame(height: 22)
+    }
+
+    private var list: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            LazyVStack(spacing: 1) {
+                ForEach(entries) { entry in
+                    ClipRow(entry: entry) { paste(entry) }
+                        .contextMenu {
+                            Button("Copy") { clipboard.write(entry) }
+                            Button("Remove", role: .destructive) { clipboard.remove(entry) }
+                            Divider()
+                            Button("Clear History", role: .destructive) { clipboard.clear() }
+                        }
+                }
+            }
+            .padding(.bottom, 2)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "doc.on.clipboard")
+                .font(.system(size: 18))
+                .foregroundStyle(.white.opacity(0.25))
+            Text("Nothing copied yet")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+            Text("Copy something and it shows up here")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.3))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// ⌥-click copies without pasting, for when the target app is not the one that
+    /// had focus.
+    private func paste(_ entry: ClipEntry) {
+        let copyOnly = NSEvent.modifierFlags.contains(.option)
+        model.pasteClipboard(entry, autoPaste: !copyOnly)
+    }
+}
+
+struct ClipRow: View {
+    let entry: ClipEntry
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    private var isMonospaced: Bool {
+        entry.kind == .command || entry.kind == .code || entry.kind == .path
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: entry.kind.symbol)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.white.opacity(hovering ? 0.55 : 0.3))
+                .frame(width: 12)
+
+            Text(entry.preview)
+                .font(isMonospaced
+                      ? .system(size: 11, design: .monospaced)
+                      : .system(size: 11))
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(Self.age(entry.lastUsed))
+                .font(.system(size: 9))
+                .foregroundStyle(.white.opacity(0.3))
+                .layoutPriority(1)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(.white.opacity(hovering ? 0.06 : 0))
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture(perform: action)
+        .help("Click to paste · ⌥-click to copy only")
+    }
+
+    /// Short relative age: `now`, `4m`, `3h`, `2d`.
+    static func age(_ date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, now.timeIntervalSince(date))
+        switch seconds {
+        case ..<60: return "now"
+        case ..<3600: return "\(Int(seconds / 60))m"
+        case ..<86_400: return "\(Int(seconds / 3600))h"
+        default: return "\(Int(seconds / 86_400))d"
+        }
+    }
+}
+
+// MARK: - Open: terminal
+
+struct TerminalPanel: View {
+    @ObservedObject var model: IslandModel
+    @ObservedObject var terminal: TerminalService
+
+    /// Most recently used first — this is a history view, so recency leads and
+    /// the use count is the secondary signal.
+    private var ordered: [TerminalEntry] {
+        terminal.entries.sorted { $0.lastPosition > $1.lastPosition }
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            if !terminal.entries.isEmpty {
+                header
+                chipRow
+            }
+
+            if terminal.entries.isEmpty {
+                emptyState
+            } else {
+                list
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var header: some View {
+        HStack(spacing: 0) {
+            Text("FREQUENT")
+                .font(.system(size: 8, weight: .semibold))
+                .tracking(0.7)
+                .foregroundStyle(.white.opacity(0.28))
+            Spacer(minLength: 0)
+            Text("\(terminal.entries.count) commands")
+                .font(.system(size: 8))
+                .foregroundStyle(.white.opacity(0.22))
+        }
+        .frame(height: 9)
+    }
+
+    private var chipRow: some View {
+        HStack(spacing: 6) {
+            ForEach(terminal.frequent()) { entry in
+                Button { paste(entry) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "terminal")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.45))
+
+                        Text(entry.display)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.82))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 7)
+                    .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(.white.opacity(0.055))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .strokeBorder(.white.opacity(0.07), lineWidth: 0.5)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Paste “\(entry.display.prefix(80))”")
+            }
+        }
+        .frame(height: 22)
+    }
+
+    private var list: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            LazyVStack(spacing: 1) {
+                ForEach(ordered) { entry in
+                    TerminalRow(entry: entry) { paste(entry) }
+                        .contextMenu {
+                            Button("Copy") { model.clipboard.writeText(entry.command) }
+                        }
+                }
+            }
+            .padding(.bottom, 2)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "terminal")
+                .font(.system(size: 18))
+                .foregroundStyle(.white.opacity(0.25))
+            Text("No history yet")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+            Text("Run something in a new terminal")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.3))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func paste(_ entry: TerminalEntry) {
+        let copyOnly = NSEvent.modifierFlags.contains(.option)
+        model.pasteTerminal(entry, autoPaste: !copyOnly)
+    }
+}
+
+struct TerminalRow: View {
+    let entry: TerminalEntry
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.white.opacity(hovering ? 0.55 : 0.3))
+                .frame(width: 12)
+
+            Text(entry.display)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("\(entry.uses)×")
+                .font(.system(size: 9))
+                .foregroundStyle(.white.opacity(0.3))
+                .layoutPriority(1)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(.white.opacity(hovering ? 0.06 : 0))
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture(perform: action)
+        .help(entry.isSecret
+              ? "Contains a credential — click to paste, ⌥-click to copy only"
+              : "Click to paste · ⌥-click to copy only")
+    }
+}
+
+// MARK: - Open: music
+
+struct MusicPanel: View {
+    @ObservedObject var model: IslandModel
+
+    private var track: NowPlaying? { model.nowPlaying }
+
+    var body: some View {
+        VStack(spacing: 8) {
             HStack(spacing: 14) {
                 ArtworkView(image: track?.artwork, size: 60, radius: 12)
 
@@ -170,22 +680,20 @@ struct ExpandedContent: View {
             }
             .frame(height: 60)
 
-            Color.clear.frame(height: 10)
-
-            progress.frame(height: 29)
+            progress.frame(height: 30)
         }
-        .padding(.horizontal, 26)
-        .padding(.top, model.notchSize.height + 12)
-        .padding(.bottom, 18)
+        .padding(.horizontal, 8)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    /// Panel width minus padding, artwork, gap, transport controls and spacer.
+    /// Panel width minus both side insets (shell 24 + panel 8 each side), the
+    /// artwork, the three HStack gaps, the spacer and the transport row.
     private var textColumnWidth: CGFloat {
-        IslandRootView.expandedSize.width - 52 - 60 - 106 - 42
+        PanelID.music.preferredSize.width - 64 - 60 - 42 - 8 - 106
     }
 
     private var subtitle: String {
-        guard let track else { return "Click to open Spotlight" }
+        guard let track else { return "Nothing playing" }
         if !track.artist.isEmpty { return track.artist }
         if !track.album.isEmpty { return track.album }
         return "Unknown Artist"
