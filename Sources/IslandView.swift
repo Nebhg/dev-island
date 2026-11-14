@@ -160,18 +160,14 @@ struct WingContent: View {
 
 // MARK: - Open: panel shell
 
-/// Hosts the active panel: optional now-playing strip, optional notice, the
-/// panel body, and the navigation row.
+/// Hosts the active panel: the switcher in the notch band, optional now-playing
+/// strip, optional notice, and the panel body.
 struct ExpandedPanel: View {
     @ObservedObject var model: IslandModel
 
     var body: some View {
-        ZStack {
-            // NotchNook's signature: the artwork itself, blurred, behind everything.
-            if model.activePanel == .music, let artwork = model.nowPlaying?.artwork {
-                ArtworkBackdrop(image: artwork)
-                    .transition(.opacity)
-            }
+        VStack(spacing: 0) {
+            PanelBar(model: model)
 
             VStack(spacing: 0) {
                 if model.activePanel.showsPlayerStrip, model.showsPlayerStrip {
@@ -186,19 +182,16 @@ struct ExpandedPanel: View {
 
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                Color.clear.frame(height: 4)
-                PanelNav(model: model)
             }
-            .padding(.top, model.notchSize.height + 4)
-            .padding(.bottom, 6)
+            .padding(.bottom, 8)
             // NotchShape tapers inward by topRadius on each side, so the body is
             // narrower than the panel. Content has to clear that or it gets clipped.
             .padding(.horizontal, 24)
-            // Switching panel changes the window size; let the content follow.
-            .animation(.easeInOut(duration: 0.16), value: model.activePanel)
+            .background(alignment: .top) { GlassSurface() }
         }
-        .animation(.easeInOut(duration: 0.25), value: model.nowPlaying?.artwork)
+        // Switching panel no longer resizes anything, so there is nothing to
+        // animate here; only the content cross-fade remains.
+        .animation(.easeInOut(duration: 0.16), value: model.activePanel)
     }
 
     @ViewBuilder
@@ -208,6 +201,73 @@ struct ExpandedPanel: View {
         case .clipboard: ClipboardPanel(model: model, clipboard: model.clipboard)
         case .terminal: TerminalPanel(model: model, terminal: model.terminal)
         case .shelf: ShelfPanel(model: model, shelf: model.shelf)
+        }
+    }
+}
+
+/// Panel switcher, sitting in the menu-bar band either side of the cutout.
+///
+/// The notch is a physical cutout, so the 32 pt band beside it is free screen space
+/// that the old bottom nav row wasted. Icons live there instead, and the panel body
+/// starts immediately below — which is worth ~22 pt of content height on every
+/// panel, and puts the switcher where the eye already is.
+struct PanelBar: View {
+    @ObservedObject var model: IslandModel
+
+    private var sideWidth: CGFloat {
+        max((PanelID.panelSize.width - model.notchSize.width) / 2, 0)
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            group(PanelID.leftPanels)
+                .frame(width: sideWidth)
+            Color.clear.frame(width: model.notchSize.width)
+            group(PanelID.rightPanels)
+                .frame(width: sideWidth)
+        }
+        .frame(height: model.notchSize.height)
+    }
+
+    private func group(_ panels: [PanelID]) -> some View {
+        HStack(spacing: 14) {
+            ForEach(panels) { panel in
+                Button { model.selectPanel(panel) } label: {
+                    Image(systemName: panel.symbol)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(
+                            .white.opacity(model.activePanel == panel ? 0.95 : 0.3)
+                        )
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(panel.title)
+            }
+        }
+    }
+}
+
+/// Black, but with a glassy lower half.
+///
+/// The notch band above stays pure black so the cutout is invisible against it;
+/// below, a faint gradient and a hairline read as a pane rather than a flat
+/// rectangle. Deliberately not `.ultraThinMaterial`: a material samples the desktop
+/// and would make the island's edge visible against the bezel.
+struct GlassSurface: View {
+    var body: some View {
+        ZStack {
+            Color.black
+            LinearGradient(
+                colors: [.white.opacity(0.055), .white.opacity(0.012)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(.white.opacity(0.09))
+                .frame(height: 0.5)
         }
     }
 }
@@ -281,31 +341,6 @@ struct NoticeStrip: View {
     }
 }
 
-struct PanelNav: View {
-    @ObservedObject var model: IslandModel
-
-    var body: some View {
-        HStack(spacing: 16) {
-            ForEach(PanelID.allCases) { panel in
-                Button {
-                    model.selectPanel(panel)
-                } label: {
-                    Image(systemName: panel.symbol)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(
-                            .white.opacity(model.activePanel == panel ? 0.95 : 0.28)
-                        )
-                        .frame(width: 24, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(panel.title)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 18)
-    }
-}
 
 /// Stand-in for the panels arriving in phases 3–4.
 struct PlaceholderPanel: View {
@@ -1026,43 +1061,51 @@ struct MusicPanel: View {
     private var track: NowPlaying? { model.nowPlaying }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            ArtworkView(image: track?.artwork, size: 92, radius: 16, shadow: true)
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
 
-            VStack(alignment: .leading, spacing: 2) {
-                MarqueeText(
-                    text: track?.title ?? "Nothing Playing",
-                    width: textColumnWidth,
-                    font: .system(size: 17, weight: .semibold),
-                    nsFont: .systemFont(ofSize: 17, weight: .semibold)
-                )
-                .foregroundStyle(.white)
-                .id(track?.title ?? "none")
+            HStack(alignment: .top, spacing: 16) {
+                ArtworkView(image: track?.artwork, size: 132, radius: 20, shadow: true)
 
-                Text(subtitle)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                VStack(alignment: .leading, spacing: 3) {
+                    MarqueeText(
+                        text: track?.title ?? "Nothing Playing",
+                        width: textColumnWidth,
+                        font: .system(size: 19, weight: .semibold),
+                        nsFont: .systemFont(ofSize: 19, weight: .semibold)
+                    )
+                    .foregroundStyle(.white)
+                    .id(track?.title ?? "none")
 
-                Spacer(minLength: 4)
+                    Text(subtitle)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
 
-                progress
+                    Spacer(minLength: 0)
 
-                Spacer(minLength: 0)
+                    progress
 
-                transport
+                    Spacer(minLength: 0)
+
+                    transport
+                }
+                // Matches the artwork so the block reads as one unit instead of a
+                // column stretched to the panel height.
+                .frame(height: 132, alignment: .top)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
-        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     /// Panel width minus the shell inset (24 each side), the panel inset (8 each
     /// side), the artwork and the gap beside it.
     private var textColumnWidth: CGFloat {
-        PanelID.music.preferredSize.width - 48 - 16 - 92 - 14
+        PanelID.panelSize.width - 48 - 16 - 132 - 16
     }
 
     private var subtitle: String {
@@ -1098,28 +1141,6 @@ struct MusicPanel: View {
     }
 }
 
-/// The artwork, blurred to fill the island. This is the detail that makes the
-/// NotchNook look: not shadows, a coloured wash behind everything.
-struct ArtworkBackdrop: View {
-    let image: NSImage
-
-    var body: some View {
-        GeometryReader { geometry in
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: geometry.size.width, height: geometry.size.height)
-                .clipped()
-                // `opaque: true` keeps the blur from fading out at the edges and
-                // leaving a visible rim against the black fill.
-                .blur(radius: 45, opaque: true)
-                .saturation(1.6)
-                .opacity(0.5)
-                .overlay(Color.black.opacity(0.55))
-        }
-        .allowsHitTesting(false)
-    }
-}
 
 // MARK: - Pieces
 

@@ -54,7 +54,11 @@ final class IslandModel: ObservableObject {
 
     init() {
         let stored = UserDefaults.standard.string(forKey: Self.defaultPanelKey)
-        let initial = stored.flatMap(PanelID.init(rawValue:)) ?? .music
+        // The default moved from music to clipboard. A stored "music" is the old
+        // default rather than a choice, so migrate it instead of leaving existing
+        // installs on a panel the user never picked.
+        let chosen = stored.flatMap(PanelID.init(rawValue:))
+        let initial = (chosen == .music ? PanelID.clipboard : chosen) ?? .clipboard
         self.defaultPanel = initial
         self.activePanel = initial
         self.terminal = TerminalService(rules: ignoreRules)

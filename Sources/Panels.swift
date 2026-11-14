@@ -3,12 +3,15 @@ import Combine
 
 // MARK: - Identity
 
-/// One panel of the island. Each owns a size, an icon and a lifecycle.
+/// One panel of the island. Each owns an icon and a lifecycle.
+///
+/// Order is the on-screen order: the first two sit left of the notch, the last two
+/// right of it, so `allCases` also drives cycling and the default-panel submenu.
 enum PanelID: String, CaseIterable, Identifiable {
-    case music
     case clipboard
     case terminal
     case shelf
+    case music
 
     var id: String { rawValue }
 
@@ -30,13 +33,17 @@ enum PanelID: String, CaseIterable, Identifiable {
         }
     }
 
-    var preferredSize: CGSize {
-        switch self {
-        case .music: CGSize(width: 440, height: 168)
-        case .clipboard, .terminal: CGSize(width: 440, height: 310)
-        case .shelf: CGSize(width: 440, height: 240)
-        }
-    }
+    /// Icons flank the physical cutout, using the menu-bar space either side of it
+    /// that the island otherwise leaves empty.
+    static let leftPanels: [PanelID] = [.clipboard, .terminal]
+    static let rightPanels: [PanelID] = [.shelf, .music]
+
+    /// Every panel is the same size. Switching therefore cannot resize the window,
+    /// which removes the animation that used to show the desktop through the island
+    /// mid-switch (risk 7) instead of trying to make that animation faster.
+    static let panelSize = CGSize(width: 440, height: 310)
+
+    var preferredSize: CGSize { Self.panelSize }
 
     /// Every panel except music carries the compact now-playing strip, so music
     /// stays reachable without giving up the full width of a list.

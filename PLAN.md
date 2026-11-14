@@ -77,27 +77,46 @@ SwiftUI animates `NotchShape` inside a non-animated `NSPanel`. The window follow
 
 **`pointerCapture` covers the one case frame-tracking alone cannot.** Switching to a shorter panel lifts the island's bottom edge above a stationary pointer, which makes `inHotZone` false and collapses the island out from under the cursor. So `model.$activePanel` snapshots the old `panel.frame` into `pointerCapture` when the pointer is inside it (line 143-146), and `handleMouse` treats that rect as inside until the pointer actually leaves it (line 348-354). It is cleared on expand and when the pointer exits the captured rect. This applies whenever a switch makes the island **shorter**; it costs nothing when it grows.
 
-The `32 pt` physical notch, `28 pt` now-playing strip, `28 pt` bottom nav, and gaps/padding consume `~116 pt` of vertical chrome on non-music panels:
+The `32 pt` physical notch, the panel bar in that band, and padding consume
+`~40 pt` of vertical chrome. **Every panel is the same size**:
 
-| Panel | Size (pt) | Rationale |
-| --- | --- | --- |
-| Music | 440 × 168 | 92 pt artwork + scrub + times + 28 pt transport needs ~104 pt of content; 162 only leaves 98 (§6) |
-| Clipboard | 440 × 310 | ~194 pt content area for frequent strip + 6 rows |
-| Terminal | 440 × 310 | same shape, same reason |
-| Shelf | 440 × 240 | ~124 pt content area for 4 file rows |
+| Panel | Size (pt) |
+| --- | --- |
+| Clipboard | 440 × 310 |
+| Terminal | 440 × 310 |
+| Shelf | 440 × 310 |
+| Music | 440 × 310 |
+
+A single size is what removes risk 7 rather than mitigating it: switching panels
+cannot resize the window, so there is no frame during which the window and the
+shape disagree and the desktop shows through. It also means the icons, the strip
+and the panel body never move when switching.
 
 ### Navigation
 
-Row of 4 SF Symbol buttons along the bottom, 20 pt: active at full white,
-inactive at 0.3 opacity. Click switches panel and resizes the window.
+The switcher sits **in the menu-bar band either side of the physical cutout**,
+which is otherwise dead screen space the island reserves and never uses. Two
+icons left of the notch, two right, in this order:
+
+```
+  clipboard  terminal  |  (notch)  |  shelf  music
+```
+
+Active at full white, inactive at 0.3. This replaced a bottom nav row, which cost
+~22 pt of content height on every panel and put the switcher where the eye is not.
 
 Deliberately **no scroll-to-switch**: a clipboard list needs wheel scrolling,
 and a global scroll handler fights it.
 
 ### Default panel
 
-Submenu on the existing status item (`Sources/App.swift:81`), persisted in
-`UserDefaults`. No settings window.
+**Clipboard.** It is the panel that is useful the instant the island opens — you
+open it to get something back, not to look at something. Submenu on the existing
+status item (`Sources/App.swift`), persisted in `UserDefaults`. No settings window.
+
+A stored `music` is treated as the old default rather than a choice and migrated
+to clipboard, so existing installs get the new behaviour instead of being stuck
+on a panel nobody picked.
 
 ### Music while another panel is open
 
@@ -562,41 +581,33 @@ existing precedent is the notch geometry constants, taken the same way.
 
 ---
 
-## 6. Music panel visual upgrade — done
+## 6. Music panel — black glass, not colour — done
 
-The detail that makes NotchNook look the way it does is a **blurred artwork
-backdrop**, not shadows. It is drawn behind the whole panel (not inside the
-content inset), so the colour washes under the nav row too:
+A blurred colour backdrop was built first and then removed. It looked good on its
+own but broke the island: colour next to the black cutout makes the notch's edge
+visible, and it made the music panel the only panel that was not black. The
+replacement is one shared surface for every panel:
 
-```swift
-Image(nsImage: artwork)
-  .resizable()
-  .aspectRatio(contentMode: .fill)
-  .frame(width: geo.size.width, height: geo.size.height)
-  .clipped()
-  .blur(radius: 45, opaque: true)   // opaque: no faded rim against the black fill
-  .saturation(1.6)
-  .opacity(0.5)
-  .overlay(Color.black.opacity(0.55))
-```
-
-Only when the music panel is active and there is artwork; otherwise the panel is
-plain black.
+- **The notch band stays pure black**, so the cutout is invisible against it.
+- **Below it, a glass pane**: a faint white gradient (5.5% → 1.2%) with a 0.5 pt
+  hairline along its top edge. Enough to read as a surface rather than a flat
+  rectangle, not enough to compete with content.
+- Deliberately **not** `.ultraThinMaterial`: a material samples the desktop behind
+  the window, which would make the island's edge visible against the bezel — the
+  exact thing the black band exists to prevent.
 
 | Element | Was | Now |
 | --- | --- | --- |
-| Artwork | 60 pt | 92 pt, continuous 16 pt corners, soft shadow |
-| Title | 15 semibold | 17 semibold |
-| Artist | 12 @ 0.55 | 13 @ 0.5 |
+| Artwork | 60 pt | 132 pt, continuous 20 pt corners, soft shadow |
+| Title | 15 semibold | 19 semibold |
+| Artist | 12 @ 0.55 | 14 @ 0.5 |
 | Scrub bar | full-width row below the content | 3 pt, in the right column under the artist, times beneath it |
 | Times | inline | 10 pt monospaced digit, elapsed / remaining |
 | Transport | grey circles | `pause.fill` in a filled 28 pt **white** circle with a dark glyph; plain 13 pt glyphs either side, 16 pt apart |
 
-**Panel height changed 162 → 168.** The measured content area at 162 pt is
-`162 − 36 (notch + gap) − 4 (gap) − 18 (nav) − 6 (bottom)` = **98 pt**, and the
-right column needs 92 pt of artwork plus scrub, times and a 28 pt transport row
-≈ 104 pt. Keeping 162 would have clipped the transport. The table in §2 records
-the new size.
+The player block is centred vertically and its right column is pinned to the
+artwork's height (`132 pt`), so the title sits beside the artwork instead of
+stretching to the panel's full height and leaving the artwork floating.
 
 Not proposed: tap-artwork-to-flip. No value, extra state.
 
@@ -678,22 +689,18 @@ show stale commands; it renders a notice strip when the option is missing.
    `|| true` is gone, and the requirement was verified byte-identical across two
    consecutive rebuilds. The certificate expires in 2036; recreating it means
    re-issuing the Accessibility grant.
-7. **Window-follows-shape animation is still not right (open, user-reported).**
-   The window is now resized every animation frame from an `Animatable` probe so
-   it tracks the shape instead of being pre-sized. Measured good: expand is
-   monotonic with no overshoot, the window is solid black through both growth and
-   shrink, and a redraw loop (`syncWindow` re-triggering itself at display rate)
-   was found and fixed. **The user still reports seeing the desktop behind the
-   island during a panel switch.** Not reproduced in captures taken at 8x slowed
-   speed, so either it is a frame-timing artefact too fast for `screencapture`
-   (~150 ms/frame) to resolve, or it is the cross-fade of two differently-sized
-   panel contents rather than the window itself.
-   Remaining suspects, in order: (a) one-frame lag between the SwiftUI shape
-   render and the window-server resize, (b) the `NotchShape` top taper leaving
-   transparent slivers at the top corners by design, (c) the content cross-fade.
-   Fix direction if it persists: stop resizing the window per frame and instead
-   put the `NSHostingView` in a container at a fixed max size, letting the window
-   clip — at the cost of laying smaller panels out in a taller box.
+7. **See-through during a panel switch (fixed by construction, needs a
+   confirmation in use).** The symptom was the desktop appearing behind the island
+   mid-switch. Every panel is now the same size, so switching cannot resize the
+   window and there is no frame in which the window and the shape disagree — the
+   resize animation that produced it no longer exists. This is why the fix is
+   structural rather than a faster animation: the earlier attempts all tried to
+   make the resize keep up.
+   The expand/collapse animation still resizes, and that path measured clean
+   (monotonic, no overshoot, solid black throughout) after the redraw-loop fix.
+   It also had to be made main-thread-safe — see §1 — because SwiftUI's async
+   renderer invokes the size probe off the main thread and `NSWindow.setFrame`
+   traps there.
 8. **Hover cannot detect a drag (resolved, 14 Nov).** `installMonitors` used to
    subscribe to `.mouseMoved` and `.leftMouseDown` only. While a button is held the
    system posts `.leftMouseDragged` instead of `.mouseMoved`, so dragging a file
