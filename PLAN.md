@@ -104,6 +104,12 @@ Submenu on the existing status item (`Sources/App.swift:81`), persisted in
 **28 pt now-playing strip pinned at the top of every non-music panel**: 20 pt
 artwork, marquee title, play/pause button.
 
+The strip is chrome, so it does not sit there forever: it is drawn while
+something is playing and for `PlayerService.stripGrace` (120 s) after playback
+stops or pauses, then disappears and the list reclaims the space. Verified by
+shortening the grace to 8 s: strip present while playing, still present 3 s after
+pausing, gone at 12 s.
+
 This is the answer to "I want to use the new panels while music plays". Music
 stops being a panel you must visit and becomes chrome plus one full panel. The
 alternative — keeping a music sidebar in every panel — costs ~110 pt of width

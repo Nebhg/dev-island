@@ -167,7 +167,7 @@ struct ExpandedPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if model.activePanel.showsPlayerStrip, model.nowPlaying != nil {
+            if model.activePanel.showsPlayerStrip, model.showsPlayerStrip {
                 PlayerStrip(model: model)
                 Color.clear.frame(height: 6)
             }
