@@ -1,0 +1,8 @@
+# Build output
+DynamicIsland.app/
+*.o
+.build/
+DerivedData/
+
+# macOS
+.DS_Store
