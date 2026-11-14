@@ -166,30 +166,39 @@ struct ExpandedPanel: View {
     @ObservedObject var model: IslandModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            if model.activePanel.showsPlayerStrip, model.showsPlayerStrip {
-                PlayerStrip(model: model)
-                Color.clear.frame(height: 6)
+        ZStack {
+            // NotchNook's signature: the artwork itself, blurred, behind everything.
+            if model.activePanel == .music, let artwork = model.nowPlaying?.artwork {
+                ArtworkBackdrop(image: artwork)
+                    .transition(.opacity)
             }
 
-            if let notice = model.panelNotice {
-                NoticeStrip(text: notice)
-                Color.clear.frame(height: 6)
+            VStack(spacing: 0) {
+                if model.activePanel.showsPlayerStrip, model.showsPlayerStrip {
+                    PlayerStrip(model: model)
+                    Color.clear.frame(height: 6)
+                }
+
+                if let notice = model.panelNotice {
+                    NoticeStrip(text: notice)
+                    Color.clear.frame(height: 6)
+                }
+
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Color.clear.frame(height: 4)
+                PanelNav(model: model)
             }
-
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Color.clear.frame(height: 4)
-            PanelNav(model: model)
+            .padding(.top, model.notchSize.height + 4)
+            .padding(.bottom, 6)
+            // NotchShape tapers inward by topRadius on each side, so the body is
+            // narrower than the panel. Content has to clear that or it gets clipped.
+            .padding(.horizontal, 24)
+            // Switching panel changes the window size; let the content follow.
+            .animation(.easeInOut(duration: 0.16), value: model.activePanel)
         }
-        .padding(.top, model.notchSize.height + 4)
-        .padding(.bottom, 6)
-        // NotchShape tapers inward by topRadius on each side, so the body is
-        // narrower than the panel. Content has to clear that or it gets clipped.
-        .padding(.horizontal, 24)
-        // Switching panel changes the window size; let the content follow.
-        .animation(.easeInOut(duration: 0.16), value: model.activePanel)
+        .animation(.easeInOut(duration: 0.25), value: model.nowPlaying?.artwork)
     }
 
     @ViewBuilder
@@ -1017,50 +1026,43 @@ struct MusicPanel: View {
     private var track: NowPlaying? { model.nowPlaying }
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 14) {
-                ArtworkView(image: track?.artwork, size: 60, radius: 12)
+        HStack(alignment: .top, spacing: 14) {
+            ArtworkView(image: track?.artwork, size: 92, radius: 16, shadow: true)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    MarqueeText(
-                        text: track?.title ?? "Nothing Playing",
-                        width: textColumnWidth
-                    )
-                    .foregroundStyle(.white)
-                    .id(track?.title ?? "none")
+            VStack(alignment: .leading, spacing: 2) {
+                MarqueeText(
+                    text: track?.title ?? "Nothing Playing",
+                    width: textColumnWidth,
+                    font: .system(size: 17, weight: .semibold),
+                    nsFont: .systemFont(ofSize: 17, weight: .semibold)
+                )
+                .foregroundStyle(.white)
+                .id(track?.title ?? "none")
 
-                    Text(subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                .layoutPriority(1)
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 4)
 
-                HStack(spacing: 10) {
-                    TransportButton(symbol: "backward.fill", size: 12) { model.player.previous() }
-                    TransportButton(
-                        symbol: track?.isPlaying == true ? "pause.fill" : "play.fill",
-                        size: 14,
-                        prominent: true
-                    ) { model.player.toggle() }
-                    TransportButton(symbol: "forward.fill", size: 12) { model.player.next() }
-                }
+                progress
+
+                Spacer(minLength: 0)
+
+                transport
             }
-            .frame(height: 60)
-
-            progress.frame(height: 30)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 8)
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    /// Panel width minus both side insets (shell 24 + panel 8 each side), the
-    /// artwork, the three HStack gaps, the spacer and the transport row.
+    /// Panel width minus the shell inset (24 each side), the panel inset (8 each
+    /// side), the artwork and the gap beside it.
     private var textColumnWidth: CGFloat {
-        PanelID.music.preferredSize.width - 64 - 60 - 42 - 8 - 106
+        PanelID.music.preferredSize.width - 48 - 16 - 92 - 14
     }
 
     private var subtitle: String {
@@ -1070,6 +1072,20 @@ struct MusicPanel: View {
         return "Unknown Artist"
     }
 
+    private var transport: some View {
+        HStack(spacing: 16) {
+            Spacer(minLength: 0)
+            TransportButton(symbol: "backward.fill", size: 13) { model.player.previous() }
+            TransportButton(
+                symbol: track?.isPlaying == true ? "pause.fill" : "play.fill",
+                size: 12,
+                prominent: true
+            ) { model.player.toggle() }
+            TransportButton(symbol: "forward.fill", size: 13) { model.player.next() }
+        }
+        .frame(height: 28)
+    }
+
     @ViewBuilder
     private var progress: some View {
         if let track, track.duration > 0 {
@@ -1077,8 +1093,31 @@ struct MusicPanel: View {
                 model.player.seek(to: seconds)
             }
         } else {
-            Color.clear
+            Color.clear.frame(height: 26)
         }
+    }
+}
+
+/// The artwork, blurred to fill the island. This is the detail that makes the
+/// NotchNook look: not shadows, a coloured wash behind everything.
+struct ArtworkBackdrop: View {
+    let image: NSImage
+
+    var body: some View {
+        GeometryReader { geometry in
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                .clipped()
+                // `opaque: true` keeps the blur from fading out at the edges and
+                // leaving a visible rim against the black fill.
+                .blur(radius: 45, opaque: true)
+                .saturation(1.6)
+                .opacity(0.5)
+                .overlay(Color.black.opacity(0.55))
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -1114,13 +1153,23 @@ struct TransportButton: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                Circle().fill(.white.opacity(prominent ? 0.14 : 0.07))
+            if prominent {
+                // Filled white circle with a dark glyph: the one high-contrast
+                // element in the panel, so play/pause reads at a glance.
+                ZStack {
+                    Circle().fill(.white.opacity(0.92))
+                    Image(systemName: symbol)
+                        .font(.system(size: size, weight: .bold))
+                        .foregroundStyle(.black.opacity(0.85))
+                }
+                .frame(width: 28, height: 28)
+            } else {
                 Image(systemName: symbol)
                     .font(.system(size: size, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .frame(width: 22, height: 28)
+                    .contentShape(Rectangle())
             }
-            .frame(width: prominent ? 34 : 26, height: prominent ? 34 : 26)
         }
         .buttonStyle(.plain)
     }
@@ -1130,6 +1179,7 @@ struct ArtworkView: View {
     let image: NSImage?
     let size: CGFloat
     let radius: CGFloat
+    var shadow = false
 
     var body: some View {
         Group {
@@ -1159,6 +1209,7 @@ struct ArtworkView: View {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
         )
+        .shadow(color: .black.opacity(shadow ? 0.45 : 0), radius: shadow ? 12 : 0, y: shadow ? 6 : 0)
     }
 }
 

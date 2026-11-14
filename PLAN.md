@@ -1,6 +1,6 @@
 # Dev Island — multi-panel plan
 
-Status: **Phases 0–4 implemented; Phases 5–6 proposed.** Phase 0 is *partial* — the
+Status: **Phases 0–5 implemented; Phase 6 proposed.** Phase 0 is *partial* — the
 YouTube/Chrome test and the paste-notice check were never run. §1 states facts
 verified against the source; rows marked *(Phase 1/2/3/4)* describe the code as it
 now stands, not the original commit. §11 records the signing setup that is in
@@ -14,7 +14,7 @@ place.
 | 2 — clipboard panel + auto-paste | done, verified by use |
 | 3 — terminal history panel | done |
 | 4 — file shelf | **done, verified by use** |
-| 5 — music visual upgrade | not built |
+| 5 — music visual upgrade | done |
 | 6 — browser-media fallback | only if Phase 0 demands it |
 
 Goal: turn a single-purpose music notch into a panel host with a clipboard
@@ -81,7 +81,7 @@ The `32 pt` physical notch, `28 pt` now-playing strip, `28 pt` bottom nav, and g
 
 | Panel | Size (pt) | Rationale |
 | --- | --- | --- |
-| Music | 440 × 162 | unchanged from today (scrub bar beside 92 pt artwork) |
+| Music | 440 × 168 | 92 pt artwork + scrub + times + 28 pt transport needs ~104 pt of content; 162 only leaves 98 (§6) |
 | Clipboard | 440 × 310 | ~194 pt content area for frequent strip + 6 rows |
 | Terminal | 440 × 310 | same shape, same reason |
 | Shelf | 440 × 240 | ~124 pt content area for 4 file rows |
@@ -562,31 +562,41 @@ existing precedent is the notch geometry constants, taken the same way.
 
 ---
 
-## 6. Music panel visual upgrade
+## 6. Music panel visual upgrade — done
 
 The detail that makes NotchNook look the way it does is a **blurred artwork
-backdrop**, not shadows:
+backdrop**, not shadows. It is drawn behind the whole panel (not inside the
+content inset), so the colour washes under the nav row too:
 
 ```swift
-artwork
-  .scaledToFill()
-  .blur(radius: 45)
+Image(nsImage: artwork)
+  .resizable()
+  .aspectRatio(contentMode: .fill)
+  .frame(width: geo.size.width, height: geo.size.height)
+  .clipped()
+  .blur(radius: 45, opaque: true)   // opaque: no faded rim against the black fill
   .saturation(1.6)
   .opacity(0.5)
   .overlay(Color.black.opacity(0.55))
-  .clipShape(NotchShape(topRadius: 19, bottomRadius: 24))
 ```
 
-Layout changes:
+Only when the music panel is active and there is artwork; otherwise the panel is
+plain black.
 
-| Element | Now | Proposed |
+| Element | Was | Now |
 | --- | --- | --- |
-| Artwork | 60 pt | 92 pt, continuous corners, soft shadow |
+| Artwork | 60 pt | 92 pt, continuous 16 pt corners, soft shadow |
 | Title | 15 semibold | 17 semibold |
 | Artist | 12 @ 0.55 | 13 @ 0.5 |
-| Scrub bar | below text | 3 pt, inside the right column beneath title/artist (fits 162 pt; tighten top/bottom padding to ~38/12 pt or place transport beside title/artist) |
-| Times | inline | 10 pt monospaced, elapsed / remaining |
-| Transport | plain glyphs | `play.fill` in a filled 28 pt circle, 16 pt neighbours |
+| Scrub bar | full-width row below the content | 3 pt, in the right column under the artist, times beneath it |
+| Times | inline | 10 pt monospaced digit, elapsed / remaining |
+| Transport | grey circles | `pause.fill` in a filled 28 pt **white** circle with a dark glyph; plain 13 pt glyphs either side, 16 pt apart |
+
+**Panel height changed 162 → 168.** The measured content area at 162 pt is
+`162 − 36 (notch + gap) − 4 (gap) − 18 (nav) − 6 (bottom)` = **98 pt**, and the
+right column needs 92 pt of artwork plus scrub, times and a 28 pt transport row
+≈ 104 pt. Keeping 162 would have clipped the transport. The table in §2 records
+the new size.
 
 Not proposed: tap-artwork-to-flip. No value, extra state.
 
@@ -630,7 +640,7 @@ re-checking — it may mask the browser session.
 | 2 | ~~Clipboard provider + frequent strip + `AccessibilityPaster`~~ **done** | — |
 | 3 | ~~Terminal provider + ignore rules + redaction~~ **done** | — |
 | 4 | ~~Shelf: drag-in detector, store with bookmarks and load-time pruning, panel, file-only drop, drag-out~~ **done, verified by use** | — |
-| 5 | Music visuals | half day |
+| 5 | ~~Music visuals: blurred backdrop, 92 pt artwork, white transport circle~~ **done** | — |
 | 6 | Browser fallback, only if Phase 0 demands it | half day |
 
 Phases 1–3 are complete. The panel shell did turn each feature into a provider

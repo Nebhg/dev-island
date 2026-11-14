@@ -32,7 +32,7 @@ enum PanelID: String, CaseIterable, Identifiable {
 
     var preferredSize: CGSize {
         switch self {
-        case .music: CGSize(width: 440, height: 162)
+        case .music: CGSize(width: 440, height: 168)
         case .clipboard, .terminal: CGSize(width: 440, height: 310)
         case .shelf: CGSize(width: 440, height: 240)
         }
