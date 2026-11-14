@@ -351,7 +351,7 @@ struct ShelfPanel: View {
                 .strokeBorder(.white.opacity(isTargeted ? 0.35 : 0), lineWidth: 1)
                 .animation(.easeOut(duration: 0.12), value: isTargeted)
         )
-        .onDrop(of: [.fileURL, .url, .text], isTargeted: $isTargeted) { providers in
+        .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
             handleDrop(providers)
         }
     }
@@ -401,11 +401,22 @@ struct ShelfPanel: View {
     /// Returns true synchronously so AppKit accepts the drop; the items load
     /// asynchronously because `NSItemProvider` may hand back a file promise.
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard !providers.isEmpty else { return false }
+        // Files only. Text and links are the clipboard's job: copying them is one
+        // keystroke, the clipboard already captures them automatically, and a shelf
+        // row would add a second place to look for the same string. A file is the
+        // one thing the clipboard cannot hold as a usable reference.
+        let fileProviders = providers.filter {
+            $0.registeredTypeIdentifiers.contains(UTType.fileURL.identifier)
+        }
+        guard !fileProviders.isEmpty else {
+            if Self.dropProbe {
+                NSLog("[probe] drop rejected, no file provider: \(providers.flatMap(\.registeredTypeIdentifiers).prefix(6))")
+            }
+            return false
+        }
 
         if Self.dropProbe {
-            let types = providers.flatMap(\.registeredTypeIdentifiers).prefix(8)
-            NSLog("[probe] drop providers=\(providers.count) types=\(types)")
+            NSLog("[probe] drop providers=\(fileProviders.count)")
         }
 
         // Set before any async work: the controller checks this on mouse-up to tell
@@ -413,28 +424,13 @@ struct ShelfPanel: View {
         // restore the previous panel over the file that was just dropped.
         model.shelfDidReceiveDrop = true
 
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                _ = provider.loadObject(ofClass: URL.self) { url, error in
-                    if Self.dropProbe {
-                        NSLog("[probe] loaded file url=\(url?.path ?? "nil") error=\(error?.localizedDescription ?? "none")")
-                    }
-                    guard let url else { return }
-                    DispatchQueue.main.async {
-                        if url.isFileURL {
-                            shelf.addFiles([url])
-                        } else {
-                            shelf.addLink(url)
-                        }
-                    }
+        for provider in fileProviders {
+            _ = provider.loadObject(ofClass: URL.self) { url, error in
+                if Self.dropProbe {
+                    NSLog("[probe] loaded url=\(url?.path ?? "nil") error=\(error?.localizedDescription ?? "none")")
                 }
-            } else if provider.canLoadObject(ofClass: NSString.self) {
-                _ = provider.loadObject(ofClass: NSString.self) { object, _ in
-                    guard let text = object as? String else { return }
-                    DispatchQueue.main.async { shelf.addText(text) }
-                }
-            } else if Self.dropProbe {
-                NSLog("[probe] provider had no usable type: \(provider.registeredTypeIdentifiers)")
+                guard let url, url.isFileURL else { return }
+                DispatchQueue.main.async { shelf.addFiles([url]) }
             }
         }
         return true

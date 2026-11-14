@@ -121,18 +121,6 @@ final class ShelfStore: ObservableObject {
         return insert(fresh)
     }
 
-    @discardableResult
-    func addText(_ text: String) -> Int {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count < 100_000 else { return 0 }
-        return insert([ShelfItem(kind: .text, payload: trimmed)])
-    }
-
-    @discardableResult
-    func addLink(_ link: URL) -> Int {
-        insert([ShelfItem(kind: .link, payload: link.absoluteString)])
-    }
-
     /// Newest first, deduped against what is already there and within the cap.
     private func insert(_ new: [ShelfItem]) -> Int {
         guard !new.isEmpty else { return 0 }
@@ -173,17 +161,8 @@ final class ShelfStore: ObservableObject {
     }
 
     func open(_ item: ShelfItem) {
-        switch item.kind {
-        case .file:
-            guard let url = item.url else { return }
-            NSWorkspace.shared.open(url)
-        case .link:
-            if let url = URL(string: item.payload) { NSWorkspace.shared.open(url) }
-        case .text:
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(item.payload, forType: .string)
-        }
+        guard let url = item.url else { return }
+        NSWorkspace.shared.open(url)
     }
 
     func copyPath(_ item: ShelfItem) {
@@ -209,12 +188,16 @@ final class ShelfStore: ObservableObject {
         guard let data = try? Data(contentsOf: url) else { return }
         guard let decoded = try? JSONDecoder().decode([ShelfItem].self, from: data) else { return }
 
-        // Prune references whose file is gone. A shelf full of dead rows is worse
-        // than a shorter shelf, and the bookmark cannot help once the target is
-        // deleted. Only at load: a file removed while the panel is open should not
-        // make its row disappear under the pointer mid-interaction.
+        // Prune anything that is not a live file reference. A shelf full of dead
+        // rows is worse than a shorter shelf, and the bookmark cannot help once the
+        // target is deleted. Only at load: a file removed while the panel is open
+        // should not make its row disappear under the pointer mid-interaction.
+        //
+        // Non-file items are pruned too. The shelf accepts files only — text and
+        // links are the clipboard's job — so a `.text` or `.link` entry can only be
+        // left over from an earlier build.
         let live = decoded.filter { item in
-            guard item.kind == .file, let fileURL = item.url else { return true }
+            guard item.kind == .file, let fileURL = item.url else { return false }
             return FileManager.default.fileExists(atPath: fileURL.path)
         }
 

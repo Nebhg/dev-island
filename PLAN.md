@@ -356,9 +356,12 @@ drag restoring the previous panel. **Remaining:** drag-out from a row.
   This is the half that makes it a tool rather than a list.
 - Click: **Reveal in Finder** — the dev-relevant action, and free.
 - Right-click: Reveal in Finder, Copy Path, Remove.
-- **Text and link drops stay as items.** boring.notch's temp-file trick exists to
-  give QuickLook something to preview inside the sandbox. We have no QuickLook
-  pane, so a text drop is just a `.text` item and a URL drop is a `.link` item.
+- **Files only.** Text and links are the clipboard's job: copying them is one
+  keystroke, the clipboard already captures them automatically, and a shelf row
+  would only add a second place to look for the same string. A file is the one
+  thing the clipboard cannot hand back as a usable reference. So the drop target
+  accepts `public.file-url` only, and dragging text at the notch does nothing at
+  all rather than opening a target that then refuses the drop.
 
 Not building **Pockets** — NotchNook's shake-the-pointer-to-open-a-pocket feature
 (Pro allows several, one per destination). Shake detection plus multi-pocket
@@ -699,6 +702,12 @@ show stale commands; it renders a notice strip when the option is missing.
 - **Terminal persistence:** none. The history is re-parsed from `~/.zsh_history` on change rather than cached in `terminal.json`.
 - **Clipboard vs terminal overlap — kept, not gated.** The clipboard captures commands as well as text, so a command you copied can appear in both panels. *Gating the clipboard to non-commands was considered and rejected:* it would delete exactly the entries the terminal can never hold — commands copied from docs, Slack or the web that have not been run yet. *Deduplicating against shell history was also rejected:* it hides a command you copied only to share, breaking the clipboard's "everything I copied" contract in a surprising way.
   If the overlap becomes annoying in use, the fix is to record the source app per entry (already read from `frontmostApplication` for the password-manager blocklist) and demote terminal-sourced copies — not to filter by kind.
+- **Shelf accepts files only.** Text and links were implemented and then removed:
+  the clipboard already captures both automatically and copying is faster than
+  dragging, so a shelf row for them was a second place to look for the same
+  string. The one thing the clipboard cannot hold as a usable reference is a file.
+  Non-file entries are pruned on load, and the drag detector ignores non-file
+  drags so the shelf does not open for them.
 - **Shelf storage: references, decided.** Path plus a plain (non-security-scoped)
   bookmark, deduped by resolved path, capped ~30. Copies were rejected: they
   duplicate data silently, need a size cap and cleanup story, and make "remove

@@ -369,7 +369,11 @@ final class IslandController {
         }
     }
 
-    /// True when the drag pasteboard is carrying something the shelf can take.
+    /// True when the drag pasteboard is carrying a file the shelf can take.
+    ///
+    /// Files only, matching what the shelf accepts: dragging text or a link at the
+    /// notch should do nothing, because copying is one keystroke and the clipboard
+    /// already holds it.
     ///
     /// Deliberately does **not** compare `changeCount`. Measured on this machine
     /// with `ISLAND_DRAG_PROBE`: one file drag produced 167 dragged frames inside
@@ -379,8 +383,7 @@ final class IslandController {
     /// pasteboard — a lazy type resolution — not when a drag begins, so gating on
     /// it silently rejects real file drags.
     private var isCarryingContent: Bool {
-        let accepted: [NSPasteboard.PasteboardType] = [.fileURL, .URL, .string]
-        return NSPasteboard(name: .drag).types?.contains(where: accepted.contains) ?? false
+        NSPasteboard(name: .drag).types?.contains(.fileURL) ?? false
     }
 
     private func handleMouse(_ event: NSEvent) {
