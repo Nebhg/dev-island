@@ -487,62 +487,34 @@ struct ShelfRow: View {
         .onTapGesture { shelf.reveal(item) }
         .contextMenu {
             Button("Open") { shelf.open(item) }
-            if item.kind == .file {
-                Button("Reveal in Finder") { shelf.reveal(item) }
-                Button("Copy Path") { shelf.copyPath(item) }
-            }
+            Button("Reveal in Finder") { shelf.reveal(item) }
+            Button("Copy Path") { shelf.copyPath(item) }
             Divider()
             Button("Remove from Shelf") { shelf.remove(item) }
         }
         .help(item.isMissing
-              ? "The original file is gone. Remove it, or ⌥-click to keep the row."
+              ? "The original file is gone — remove the row to clear it"
               : "Click to reveal in Finder · right-click for more")
     }
 
-    @ViewBuilder
     private var icon: some View {
-        switch item.kind {
-        case .file:
-            if let url = item.url {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .opacity(item.isMissing ? 0.4 : 1)
-            } else {
-                Image(systemName: "doc")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.5))
-            }
-        case .text:
-            Image(systemName: "text.alignleft")
-                .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.5))
-        case .link:
-            Image(systemName: "link")
-                .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.5))
-        }
+        Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .opacity(item.isMissing ? 0.4 : 1)
     }
 
     /// Folder and size: the two things that tell you whether this is the file you
     /// meant, when the name alone is ambiguous.
     private var detail: String? {
-        switch item.kind {
-        case .file:
-            guard let url = item.url else { return nil }
-            if item.isMissing { return "Missing — the file was moved or deleted" }
-            let folder = url.deletingLastPathComponent().lastPathComponent
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
-            guard let size else { return folder }
-            let formatted = ByteCountFormatter.string(
-                fromByteCount: Int64(size), countStyle: .file
-            )
-            return "\(folder) · \(formatted)"
-        case .text:
-            return "Text"
-        case .link:
-            return item.payload
-        }
+        if item.isMissing { return "Missing — the file was moved or deleted" }
+        let folder = item.url.deletingLastPathComponent().lastPathComponent
+        let size = (try? item.url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+        guard let size else { return folder }
+        let formatted = ByteCountFormatter.string(
+            fromByteCount: Int64(size), countStyle: .file
+        )
+        return "\(folder) · \(formatted)"
     }
 }
 

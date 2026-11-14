@@ -2,56 +2,40 @@ import AppKit
 import Combine
 import Foundation
 
-/// One thing parked on the shelf.
+/// One file parked on the shelf.
 ///
 /// A **reference**, never a copy: removing a row must not touch the real file.
-/// `payload` is the path for `.file`, the text itself for `.text`, and the URL
-/// string for `.link`.
 struct ShelfItem: Identifiable, Codable, Equatable {
-    enum Kind: String, Codable {
-        case file
-        case text
-        case link
-    }
-
     let id: UUID
-    var kind: Kind
-    var payload: String
+    /// Absolute path at the time it was dropped. `bookmark` is preferred when
+    /// resolving, because it survives a move or a rename.
+    var path: String
     /// Plain (not security-scoped) bookmark. Dev Island is unsandboxed, so a bare
     /// path would keep working forever; the bookmark earns its place by surviving
-    /// a rename or a move, which a path does not.
+    /// a move, which a path does not.
     var bookmark: Data?
     var added: Date
 
-    init(
-        id: UUID = UUID(),
-        kind: Kind,
-        payload: String,
-        bookmark: Data? = nil,
-        added: Date = Date()
-    ) {
+    /// `path` was stored as `payload` in the build that also held text and links.
+    /// Reading the old key keeps an existing shelf from being thrown away on
+    /// upgrade; a leftover text entry then fails the absolute-path check in
+    /// `ShelfStore.load` and is pruned.
+    private enum CodingKeys: String, CodingKey {
+        case id, bookmark, added
+        case path = "payload"
+    }
+
+    init(id: UUID = UUID(), path: String, bookmark: Data? = nil, added: Date = Date()) {
         self.id = id
-        self.kind = kind
-        self.payload = payload
+        self.path = path
         self.bookmark = bookmark
         self.added = added
     }
 
-    var name: String {
-        switch kind {
-        case .file:
-            return (payload as NSString).lastPathComponent
-        case .text:
-            let firstLine = payload.split(separator: "\n").first.map(String.init) ?? payload
-            return firstLine.isEmpty ? "Text" : firstLine
-        case .link:
-            return URL(string: payload)?.host ?? payload
-        }
-    }
+    var name: String { (path as NSString).lastPathComponent }
 
     /// Resolved location, preferring the bookmark so a moved file still opens.
-    var url: URL? {
-        guard kind == .file else { return nil }
+    var url: URL {
         if let bookmark {
             var stale = false
             if let resolved = try? URL(
@@ -63,29 +47,26 @@ struct ShelfItem: Identifiable, Codable, Equatable {
                 return resolved
             }
         }
-        return URL(fileURLWithPath: payload)
+        return URL(fileURLWithPath: path)
     }
 
     /// A dead reference, which can only happen mid-session: files whose path is
-    /// gone are pruned on load, the way boring.notch validates on launch. A file
-    /// deleted while the panel is open stays visible rather than vanishing under
-    /// the pointer.
+    /// gone are pruned on load. A file deleted while the panel is open stays
+    /// visible rather than vanishing under the pointer.
     var isMissing: Bool {
-        guard kind == .file, let url else { return false }
-        return !FileManager.default.fileExists(atPath: url.path)
+        !FileManager.default.fileExists(atPath: url.path)
     }
 
-    /// Identity for dedupe. Files compare by resolved path so dropping the same
-    /// file twice does not create two rows.
-    var identity: String {
-        switch kind {
-        case .file: return url?.path ?? payload
-        case .text, .link: return payload
-        }
-    }
+    /// Identity for dedupe, so dropping the same file twice does not make two rows.
+    var identity: String { url.path }
 }
 
 /// The shelf: a staging area in transit, not a file manager.
+///
+/// Files only. Text and links belong to the clipboard — copying them is one
+/// keystroke and it captures them automatically — so a shelf row would only be a
+/// second place to look for the same string. A file is the one thing the clipboard
+/// cannot hand back as a usable reference.
 ///
 /// Writes are immediate rather than debounced. Unlike the clipboard, nothing here
 /// changes in bursts — every mutation is a user action — so there is no write
@@ -112,11 +93,7 @@ final class ShelfStore: ObservableObject {
     @discardableResult
     func addFiles(_ urls: [URL]) -> Int {
         let fresh = urls.filter(\.isFileURL).map { fileURL in
-            ShelfItem(
-                kind: .file,
-                payload: fileURL.path,
-                bookmark: Self.bookmark(for: fileURL)
-            )
+            ShelfItem(path: fileURL.path, bookmark: Self.bookmark(for: fileURL))
         }
         return insert(fresh)
     }
@@ -156,20 +133,17 @@ final class ShelfStore: ObservableObject {
     // MARK: - Actions
 
     func reveal(_ item: ShelfItem) {
-        guard let url = item.url else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        NSWorkspace.shared.activateFileViewerSelecting([item.url])
     }
 
     func open(_ item: ShelfItem) {
-        guard let url = item.url else { return }
-        NSWorkspace.shared.open(url)
+        NSWorkspace.shared.open(item.url)
     }
 
     func copyPath(_ item: ShelfItem) {
-        guard item.kind == .file else { return }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(item.url?.path ?? item.payload, forType: .string)
+        pasteboard.setString(item.url.path, forType: .string)
     }
 
     // MARK: - Disk
@@ -193,12 +167,11 @@ final class ShelfStore: ObservableObject {
         // target is deleted. Only at load: a file removed while the panel is open
         // should not make its row disappear under the pointer mid-interaction.
         //
-        // Non-file items are pruned too. The shelf accepts files only — text and
-        // links are the clipboard's job — so a `.text` or `.link` entry can only be
-        // left over from an earlier build.
+        // The absolute-path check also drops leftovers from the build that accepted
+        // text and links, whose "path" was the text itself.
         let live = decoded.filter { item in
-            guard item.kind == .file, let fileURL = item.url else { return false }
-            return FileManager.default.fileExists(atPath: fileURL.path)
+            guard item.path.hasPrefix("/") else { return false }
+            return FileManager.default.fileExists(atPath: item.url.path)
         }
 
         items = Array(live.prefix(Self.cap))
