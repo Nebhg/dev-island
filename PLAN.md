@@ -13,7 +13,7 @@ records the signing setup that is in place.
 | 1.5 — rename + self-signed signing | done |
 | 2 — clipboard panel + auto-paste | done, verified by use |
 | 3 — terminal history panel | done |
-| 4 — file shelf | designed (§5), not built |
+| 4 — file shelf | drag-in, store, panel and drop done; drag-out remaining |
 | 5 — music visual upgrade | not built |
 | 6 — browser-media fallback | only if Phase 0 demands it |
 
@@ -333,6 +333,12 @@ from the shelf never touches the real file.
 
 ### Design for Dev Island
 
+**Built so far:** the store (path + plain bookmark, dedupe by resolved path, cap
+30, immediate 0600 write), the panel (file icon, folder, size, click-to-reveal,
+right-click menu, missing files dimmed with a reason), drop handling for file
+URLs, plain URLs and text, and drag-in that opens the shelf — with a cancelled
+drag restoring the previous panel. **Remaining:** drag-out from a row.
+
 - Drop target covers the **closed island** too, not just the open panel —
   flicking a file at the notch is the point. A drag entering the hot zone
   expands straight to the Shelf panel.
@@ -587,7 +593,7 @@ re-checking — it may mask the browser session.
 | 1.5 | ~~Rename to `dev.island` + `NSAppleEventsUsageDescription`; self-signed cert; `build.sh` signing; verify grants survive a rebuild~~ **done** | — |
 | 2 | ~~Clipboard provider + frequent strip + `AccessibilityPaster`~~ **done** | — |
 | 3 | ~~Terminal provider + ignore rules + redaction~~ **done** | — |
-| 4 | Shelf. Drag-in detector **done** (risks 8, 10 closed); drag-out from a non-activating panel **confirmed** (risk 9). Remaining: shelf store, panel UI, drop handling, drag-out rows | day |
+| 4 | Shelf. **Done:** drag-in detector (risks 8, 10 closed), store with bookmarks, panel, drop handling, drag-in opens the shelf and restores the previous panel on cancel. **Remaining:** drag-out from a row (`NSView` + `NSDraggingSource`, 3 pt threshold, copy-only) | half day left |
 | 5 | Music visuals | half day |
 | 6 | Browser fallback, only if Phase 0 demands it | half day |
 
