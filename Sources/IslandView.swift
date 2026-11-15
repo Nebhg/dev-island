@@ -224,8 +224,18 @@ struct ExpandedPanel: View {
     private var content: some View {
         switch model.activePanel {
         case .music: MusicPanel(model: model)
-        case .clipboard: ClipboardPanel(model: model, clipboard: model.clipboard)
-        case .terminal: TerminalPanel(model: model, terminal: model.terminal)
+        // Same view twice; only the trailing slot and the words differ. See
+        // `Sources/HistoryPanel.swift`.
+        case .clipboard:
+            HistoryPanel(model: model, source: model.clipboard) { entry in
+                AgeView(copiedAt: entry.copiedAt)
+            }
+        case .terminal:
+            HistoryPanel(model: model, source: model.terminal) { entry in
+                Text("\(entry.uses)×")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.3))
+            }
         case .shelf: ShelfPanel(model: model, shelf: model.shelf)
         case .settings: SettingsPanel(model: model, clipboard: model.clipboard, terminal: model.terminal)
         }
@@ -768,130 +778,25 @@ final class RowInputView: NSView, NSDraggingSource {
     @objc private func removeFromShelf() { if let item, let shelf { shelf.remove(item) } }
 }
 
-// MARK: - Open: clipboard
+// MARK: - Open: history lists
+//
+// Both history panels are `HistoryPanel`, in `Sources/HistoryPanel.swift`. What is
+// left here is the piece each of them owns: the trailing slot on a row.
 
-struct ClipboardPanel: View {
-    @ObservedObject var model: IslandModel
-    @ObservedObject var clipboard: ClipboardService
-
-    private var entries: [ClipEntry] { clipboard.entries }
+/// The clipboard's trailing slot: a relative age, recomputed on a timeline rather
+/// than only when the row is rebuilt, so "3m" cannot sit there for an hour on a
+/// panel left open. `.everyMinute`, not `.periodic(from: .now, ...)`: `.now` is
+/// re-evaluated every render, which restarts the schedule and pins a core.
+struct AgeView: View {
+    let copiedAt: Date
 
     var body: some View {
-        VStack(spacing: 6) {
-            // Clean layout leaves just the list; the controls are in Settings.
-            if !model.cleanLayout {
-                if !entries.isEmpty {
-                    header
-                }
-                if !clipboard.frequent.isEmpty {
-                    chipRow
-                }
-            }
-
-            if clipboard.visible.isEmpty {
-                emptyState
-            } else {
-                list
-            }
+        TimelineView(.everyMinute) { context in
+            Text(Age.string(copiedAt, now: context.date))
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.3))
+                .help("Copied \(copiedAt.formatted(date: .abbreviated, time: .shortened))")
         }
-        .frame(maxHeight: .infinity, alignment: .top)
-    }
-
-    private var header: some View {
-        PanelSectionHeader(title: "FREQUENT") {
-            PasteToggle(enabled: model.autoPasteEnabled) { model.autoPasteEnabled.toggle() }
-                .padding(.trailing, 8)
-            HistoryWindowPicker(window: clipboard.window) { clipboard.window = $0 }
-        }
-    }
-
-    /// Most-used entries, one click away. Equal widths and one line each: uneven
-    /// chip sizes were what made the old strip look messy.
-    private var chipRow: some View {
-        HStack(spacing: 6) {
-            ForEach(clipboard.frequent) { entry in
-                FrequentChip(
-                    symbol: entry.kind.symbol,
-                    text: entry.preview,
-                    help: "Paste “\(entry.preview.prefix(80))”"
-                ) { paste(entry) }
-            }
-        }
-        .frame(height: 24)
-    }
-
-    private var list: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
-                rows
-            }
-            // Follows the selection, scrolling only as far as it takes to show it.
-            // Keyed on the row id, so an id that is no longer in the list simply
-            // does not scroll.
-            .onChange(of: model.listSelection) { _, selection in
-                guard let selection, selection.panel == .clipboard else { return }
-                proxy.scrollTo(selection.id)
-            }
-        }
-    }
-
-    private var rows: some View {
-        LazyVStack(spacing: 1) {
-            ForEach(Array(clipboard.visible.enumerated()), id: \.element.id) { index, entry in
-                HistoryRow(
-                    symbol: entry.kind.symbol,
-                    text: entry.preview,
-                    monospaced: entry.isMonospaced,
-                    help: "Click to paste · ⌥-click to copy only",
-                    selected: model.isSelected(.clipboard, id: entry.id),
-                    action: { paste(entry) }
-                ) {
-                    // Ages are recomputed on a timeline rather than only when
-                    // the row is rebuilt, so "3m" cannot sit there for an hour
-                    // on a panel left open. `.everyMinute`, not
-                    // `.periodic(from: .now, ...)`: `.now` is re-evaluated every
-                    // render, which restarts the schedule and pins a core.
-                    TimelineView(.everyMinute) { context in
-                        Text(Age.string(entry.copiedAt, now: context.date))
-                            .font(.system(size: 10))
-                            .foregroundStyle(.white.opacity(0.3))
-                            .help("Copied \(entry.copiedAt.formatted(date: .abbreviated, time: .shortened))")
-                    }
-                }
-                    .contextMenu {
-                        Button("Copy") { clipboard.write(entry) }
-                        Button("Remove", role: .destructive) { clipboard.remove(entry) }
-                        Divider()
-                        Button("Clear History", role: .destructive) { clipboard.clear() }
-                    }
-                    .id(entry.id)
-            }
-        }
-    }
-
-    /// Two different nothings: an empty history, or a window that excludes
-    /// everything in it. Saying "nothing copied yet" while 300 entries sit behind
-    /// a filter would read as broken.
-    /// Two different nothings: an empty history, or a window that excludes
-    /// everything in it.
-    private var emptyState: some View {
-        let filtered = !entries.isEmpty
-        return PanelEmptyState(
-            symbol: filtered ? "line.3.horizontal.decrease" : "doc.on.clipboard",
-            title: filtered
-                ? "Nothing in the last \(clipboard.window.span)"
-                : "Nothing copied yet",
-            subtitle: filtered
-                ? (model.cleanLayout ? "Choose All in Settings to see older items" : "Pick All to see older items")
-                : "Copy something and it shows up here"
-        )
-    }
-
-    /// ⌥-click copies without pasting, for when the target app is not the one that
-    /// had focus.
-    private func paste(_ entry: ClipEntry) {
-        let copyOnly = NSEvent.modifierFlags.contains(.option)
-        model.pasteClipboard(entry, autoPaste: !copyOnly)
     }
 }
 
@@ -905,103 +810,6 @@ enum Age {
         case ..<86_400: return "\(Int(seconds / 3600))h"
         default: return "\(Int(seconds / 86_400))d"
         }
-    }
-}
-
-
-// MARK: - Open: terminal
-
-struct TerminalPanel: View {
-    @ObservedObject var model: IslandModel
-    @ObservedObject var terminal: TerminalService
-
-    var body: some View {
-        VStack(spacing: 6) {
-            if !model.cleanLayout {
-                if !terminal.entries.isEmpty {
-                    header
-                }
-                if !terminal.frequent.isEmpty {
-                    chipRow
-                }
-            }
-
-            if terminal.visible.isEmpty {
-                emptyState
-            } else {
-                list
-            }
-        }
-        .frame(maxHeight: .infinity, alignment: .top)
-    }
-
-    private var header: some View {
-        PanelSectionHeader(title: "FREQUENT") {
-            // The filtered count, so the number agrees with the rows below it and
-            // clicking a window gives immediate feedback.
-            Text("\(terminal.visible.count) command\(terminal.visible.count == 1 ? "" : "s")")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.22))
-                .padding(.trailing, 10)
-            PasteToggle(enabled: model.autoPasteEnabled) { model.autoPasteEnabled.toggle() }
-                .padding(.trailing, 8)
-            HistoryWindowPicker(window: terminal.window) { terminal.window = $0 }
-        }
-    }
-
-    private var chipRow: some View {
-        HStack(spacing: 6) {
-            ForEach(terminal.frequent) { entry in
-                FrequentChip(
-                    symbol: "terminal",
-                    text: entry.display,
-                    monospaced: true,
-                    help: "Paste “\(entry.display.prefix(80))”"
-                ) { paste(entry) }
-            }
-        }
-        .frame(height: 24)
-    }
-
-    private var list: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: 1) {
-                ForEach(terminal.visible) { entry in
-                    HistoryRow(
-                        symbol: "terminal",
-                        text: entry.display,
-                        monospaced: true,
-                        help: entry.isSecret
-                            ? "Contains a credential — click to paste, ⌥-click to copy only"
-                            : "Click to paste · ⌥-click to copy only",
-                        action: { paste(entry) }
-                    ) {
-                        Text("\(entry.uses)×")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.white.opacity(0.3))
-                    }
-                        .contextMenu {
-                            Button("Copy") { model.clipboard.writeText(entry.command) }
-                        }
-                }
-            }
-        }
-    }
-
-    private var emptyState: some View {
-        let filtered = !terminal.entries.isEmpty
-        return PanelEmptyState(
-            symbol: filtered ? "line.3.horizontal.decrease" : "terminal",
-            title: filtered ? "Nothing in the last \(terminal.window.span)" : "No history yet",
-            subtitle: filtered
-                ? (model.cleanLayout ? "Choose All in Settings to see older commands" : "Pick All to see older commands")
-                : "Run something in a new terminal"
-        )
-    }
-
-    private func paste(_ entry: TerminalEntry) {
-        let copyOnly = NSEvent.modifierFlags.contains(.option)
-        model.pasteTerminal(entry, autoPaste: !copyOnly)
     }
 }
 

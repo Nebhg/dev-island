@@ -239,6 +239,25 @@ final class IslandModel: ObservableObject {
         listSelection = ListSelection(panel: selection.panel, id: rowID(of: selection.panel, at: next))
     }
 
+    /// Puts one row on the pasteboard and pastes it, as clicking it does.
+    ///
+    /// The single place the two lists differ. It has to be a switch and cannot be
+    /// generalised further: a clipboard row must bump its frecency, and a terminal
+    /// command must not be written into clipboard history — so each keeps its own
+    /// paste method, and this is the six lines that choose between them.
+    func paste(panel: PanelID, rowID: String, autoPaste: Bool) {
+        switch panel {
+        case .clipboard:
+            guard let entry = clipboard.visible.first(where: { $0.id == rowID }) else { return }
+            pasteClipboard(entry, autoPaste: autoPaste)
+        case .terminal:
+            guard let entry = terminal.visible.first(where: { $0.id == rowID }) else { return }
+            pasteTerminal(entry, autoPaste: autoPaste)
+        default:
+            break
+        }
+    }
+
     /// Pastes the selected row; `copyOnly` is ⌥↩, for when the target app is not the
     /// one that had focus.
     ///
@@ -247,23 +266,21 @@ final class IslandModel: ObservableObject {
     /// `endKeyboardSelection` three calls deep inside a function whose job is
     /// pasting is not a guarantee — it is a coincidence that happens to hold today.
     func pasteSelection(copyOnly: Bool) {
-        guard let selection = listSelection, let index = selectedRowIndex else { return }
-        switch selection.panel {
-        case .clipboard:
-            let entries = clipboard.visible
-            guard entries.indices.contains(index) else { return }
+        guard let selection = listSelection, let row = selectedRowID else {
+            // Not a list, or nothing selected: nothing to paste, but the mode still
+            // has to end or the keys stay registered.
             endKeyboardSelection()
-            pasteClipboard(entries[index], autoPaste: !copyOnly)
-        case .terminal:
-            let entries = terminal.visible
-            guard entries.indices.contains(index) else { return }
-            endKeyboardSelection()
-            pasteTerminal(entries[index], autoPaste: !copyOnly)
-        default:
-            // Not a list: nothing to paste, but the mode still has to end or the
-            // keys stay registered.
-            endKeyboardSelection()
+            return
         }
+        endKeyboardSelection()
+        paste(panel: selection.panel, rowID: row, autoPaste: !copyOnly)
+    }
+
+    /// The selected row's id, or nil when there is not one: no row selected, or an
+    /// empty list, whose placeholder id matches nothing.
+    private var selectedRowID: String? {
+        guard let selection = listSelection, selectedRowIndex != nil else { return nil }
+        return selection.id
     }
 
     /// Index of the selected row in its own list, derived rather than stored.
