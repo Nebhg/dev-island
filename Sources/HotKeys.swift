@@ -58,7 +58,16 @@ final class HotKeys {
     }
 
     /// What a mode-group chord means. Only live while `modeKeys` is installed.
+    ///
+    /// `cyclePanel` and `moveRow` are named apart rather than folded into one
+    /// `step(Int)`: the two used to travel as the same case because the same chord
+    /// served both, and at the call site they were indistinguishable. They are not
+    /// the same action and do not read as one.
     enum ModeKey {
+        /// `←` / `→`. Previous or next list panel.
+        case cyclePanel(Int)
+        /// `↑` / `↓`. Previous or next row in the list on screen.
+        case moveRow(Int)
         case paste
         case copy
         case close
@@ -102,6 +111,13 @@ final class HotKeys {
         case pasteKeypad = 12
         case copy = 13
         case close = 14
+        // Appended rather than inserted: the six chords above are removed by the
+        // commit that follows this one, and renumbering twice would make this diff
+        // unreadable to no purpose.
+        case left = 15
+        case right = 16
+        case up = 17
+        case down = 18
     }
 
     private struct Key {
@@ -165,6 +181,10 @@ final class HotKeys {
     /// arrows the earlier design also took are **not** here: row movement shares
     /// `⌃⌥←/→` with cycling, so it costs no registration at all.
     private static let modeKeys: [Key] = [
+        Key(slot: .left, keyCode: UInt32(kVK_LeftArrow), modifiers: 0),
+        Key(slot: .right, keyCode: UInt32(kVK_RightArrow), modifiers: 0),
+        Key(slot: .up, keyCode: UInt32(kVK_UpArrow), modifiers: 0),
+        Key(slot: .down, keyCode: UInt32(kVK_DownArrow), modifiers: 0),
         Key(slot: .paste, keyCode: UInt32(kVK_Return), modifiers: 0),
         Key(slot: .pasteKeypad, keyCode: UInt32(kVK_ANSI_KeypadEnter), modifiers: 0),
         Key(slot: .copy, keyCode: UInt32(kVK_Return), modifiers: UInt32(optionKey)),
@@ -306,6 +326,14 @@ final class HotKeys {
             onToggle?()
         case .clipboard:
             onClipboard?()
+        case .left:
+            onModeKey?(.cyclePanel(-1))
+        case .right:
+            onModeKey?(.cyclePanel(1))
+        case .up:
+            onModeKey?(.moveRow(-1))
+        case .down:
+            onModeKey?(.moveRow(1))
         case .paste, .pasteKeypad:
             onModeKey?(.paste)
         case .copy:

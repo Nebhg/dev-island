@@ -400,6 +400,8 @@ final class IslandController {
 
     private func handleModeKey(_ key: HotKeys.ModeKey) {
         switch key {
+        case .cyclePanel(let step): model.cycleListPanel(by: step)
+        case .moveRow(let step): model.moveSelection(by: step)
         case .paste: model.pasteSelection(copyOnly: false)
         case .copy: model.pasteSelection(copyOnly: true)
         // `collapse()` ends the mode as well, so this unregisters the keys.

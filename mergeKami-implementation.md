@@ -11,7 +11,7 @@ incomplete and this file is the correction.
 |---|---|---|
 | 1 | `Make the keyboard mode a mode, not a selection` | committed `e0bd007` — typechecks |
 | 2 | `Register the mode's keys against the mode` | **built, uncommitted** — typechecks |
-| 3 | `Cycle the two list panels with the arrows` | not started |
+| 3 | `Cycle the two list panels with the arrows` | **built, uncommitted** — typechecks |
 | 4 | `Drop the cycle chords and the Tab aliases` | not started |
 | 5 | `Arm the island from the toggle key` | not started |
 | 6 | `Document the keyboard layer that exists` | not started |
@@ -200,3 +200,68 @@ Not verified at runtime.
 
 Unchanged from phase 1: auto-repeat unmeasured, GIFs undecided, `⌃⌘V` no longer
 restores the panel it detoured from.
+
+---
+
+## Phase 3 — cycle the two list panels with the arrows
+
+**Plan:** §12 commit 3 — `cycleListPanel`, `ModeKey.cyclePanel` / `.moveRow`, delete the
+`onPanelKey` fork.
+**Actually changed:** `Sources/IslandModel.swift`, `Sources/HotKeys.swift`,
+`Sources/IslandController.swift`.
+
+### What was done
+
+- `IslandModel.cycleListPanel(by:)` — walks `[.clipboard, .terminal]` and wraps.
+- `ModeKey` gains `.cyclePanel(Int)` and `.moveRow(Int)`, named apart.
+- `Slot` gains `left = 15`, `right = 16`, `up = 17`, `down = 18`.
+- `modeKeys` gains the four arrow chords at `modifiers: 0`.
+- `dispatch` maps them; `handleModeKey` calls `cycleListPanel` / `moveSelection`.
+
+### Where reality differs from the plan
+
+**1. The arrows are registered here, not in phase 4.** As planned, phase 3 added
+`ModeKey.cyclePanel` / `.moveRow` but the `← → ↑ ↓` chords arrived in phase 4 — which
+meant phase 3 would ship two `switch` arms with nothing that could ever reach them.
+§12 leaves the case with no producer for a commit, and the repo has already dropped
+dead code once for exactly this reason (`4fea189`). Pulling registration forward makes
+every commit self-contained: phase 3 adds a working feature, phase 4 removes the
+chords it replaces.
+
+**2. `Slot` numbers were appended as 15–18 instead of renumbered immediately.** They
+sit after `close = 14`, so the namespace stays contiguous. Phase 4 removes six cases
+from the middle and renumbers to 0–12 — doing it twice would make both diffs harder to
+read than either.
+
+**3. `cyclePanel` is still here and now has one caller.** `⌃⌥←/→` outside the mode still
+walks every panel, which is the documented behaviour until phase 4 deletes those
+chords. When phase 4 does, `cyclePanel` loses its last caller and must go with them —
+it is not left in place as an unused function.
+
+**4. The `.step` fork in `onPanelKey` survives this commit.** In keyboard mode
+`⌃⌥←/→` still move the row through it, which is now a duplicate of `↑`/`↓`. Removing the
+fork, `PanelKey.step` and the two cycle slots is one operation, and it belongs with the
+commit that removes the chords feeding them.
+
+### Verification
+
+```
+swiftc -typecheck … → clean (exit 0)
+```
+
+Not verified at runtime. In particular the claim that a held `↓` repeats is still a
+hypothesis: Carbon may deliver one press per physical down-stroke, in which case the
+list moves one row per press and this needs a timer.
+
+### Known-broken after phase 3, by design
+
+- `⌃⌥←/→` and `⌥Tab`/`⌥⇧Tab` are still registered, and still compete with the arrows
+  for "what does the mode's left/right mean" — the arrows win because they are
+  separate chords, but both paths are live until phase 4.
+- `⌥↩` still copies from the keyboard; phase 4 removes it with the `copy` slot.
+- `⌃⌥↓` still closes an expanded island rather than arming it (phase 5).
+
+### Open, carried forward
+
+Auto-repeat unmeasured; GIFs undecided; `⌃⌘V` no longer restores the panel it detoured
+from.

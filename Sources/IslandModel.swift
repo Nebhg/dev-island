@@ -492,6 +492,20 @@ final class IslandModel: ObservableObject {
         selectPanel(all[next])
     }
 
+    /// Moves to the next or previous **list** panel, wrapping between the two.
+    ///
+    /// Separate from `cyclePanel`, which walks every panel including the three with no
+    /// rows. This is what the mode's arrows use, and it has to stay on lists: reaching
+    /// Shelf or Music would end the mode, which is the opposite of what an arrow press
+    /// is asking for. Descending from `cyclePanel` would also make the destination
+    /// depend on `PanelID`'s declaration order, which is a display concern.
+    func cycleListPanel(by step: Int) {
+        let lists: [PanelID] = [.clipboard, .terminal]
+        guard let index = lists.firstIndex(of: activePanel) else { return }
+        let next = (index + step + lists.count) % lists.count
+        selectPanel(lists[next])
+    }
+
     // MARK: - Clipboard
 
     /// Copies an entry back and, when asked and permitted, pastes it into whatever
