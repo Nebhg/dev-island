@@ -42,7 +42,7 @@ These matter because they invalidate some obvious approaches.
 | `expand()` selects `defaultPanel` before flipping `expanded` **(found in Phase 4)** | `Sources/IslandModel.swift:86-90` | Anything wanting a specific panel on expand must select it **after** calling `expand()`; selecting first is silently overwritten. This cost a drop target: the shelf was selected during a drag, `expand()` replaced it with the default panel, and the drop landed on a panel with no drop handler. |
 | No SPM, no dependencies — plain `swiftc` | `build.sh` | No GRDB/Realm. Persistence must be `Codable` JSON, capped and debounced. |
 | `~/.zsh_history`: ~1,300 lines and growing, **no timestamps**, `\` continuations, non-UTF-8 bytes | measured | Recency must come from file position, not time. The parser must join continuations and decode lossily. `INC_APPEND_HISTORY` is now set in `~/.zshrc`, so the file is written per command rather than on shell exit. `EXTENDED_HISTORY` is still off. |
-| `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift:383` | Policy is `!expanded` — the closed window is only the camera cutout, so it stays interactive as the `NSDraggingDestination` for dropping a file at the notch. It used to branch on `isPlaying`, because the playing chin covered live menu bar; the chin is gone (macOS draws the live activity itself, §6), so there is nothing to click through. During a drag session `mouseMoved` does not fire, which is why the closed window must be interactive rather than hit-tested on movement. |
+| `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift:383` | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay interactive as an `NSDraggingDestination`, while the `249 pt` playing chin stays click-through because it covers live menu bar. |
 | Hover monitors cover `.mouseMoved`, `.leftMouseDown`, `.leftMouseDragged`, `.leftMouseUp` **(Phase 4)** | `Sources/IslandController.swift` (`installMonitors`, `isCarryingContent`) | A held mouse button posts `.leftMouseDragged`, not `.mouseMoved`, so drag-in needs its own event type or the island never expands. The gate is the drag pasteboard's **types**, not its `changeCount`: measured, the count does not move when a drag starts. The pasteboard is cleared on `.mouseMoved` because AppKit leaves the previous drag's types behind. See §5. |
 | Polls only run while expanded **(Phase 1)** | `Sources/IslandController.swift` (`$expanded` sink), `Sources/IslandModel.swift` (`startPolling` / `stopPolling`) | Both the Spotlight watch and `PlayerService.startPolling()` / `stopPolling()` are driven off `$expanded`. Verified: zero `osascript` spawns while closed. This is the precedent the `PanelProvider` lifecycle follows. |
 | Panel level `.mainMenu + 3`, SkyLight space attach | `Sources/FullscreenSupport.swift` | New panels inherit this; no extra work. |
@@ -220,22 +220,27 @@ on a panel nobody picked.
 
 ### Music while another panel is open
 
-**Nothing of ours is drawn while closed — macOS already does it.** When media plays,
-the menu bar shows the system's own now-playing live activity: artwork plus a
-waveform, in a pill just right of the notch, coloured from the artwork, and it
-persists through a pause.
+**The closed island shows the track in a "chin": the cutout widens by
+`2 * (height - 12) + 20` while music plays**, with 20 pt artwork on one side and a
+three-bar waveform on the other.
 
-An earlier version drew a "chin" beside the cutout — the island widened by
-`2 * (height - 12) + 20`, with 20 pt artwork and three bars. It was modelled on
-BoringNotch and worked, but macOS now draws the same thing, so both appeared side by
-side: two artworks 200 pt apart. The system's is better on every axis — it is already
-there, it colours itself from the artwork, it survives a pause, and it costs us
-nothing. Ours cost **3.8% of a core** whenever music played and the island was closed.
+macOS also draws its own now-playing live activity further along the menu bar, so
+both are visible. That was first treated as duplication and the chin was deleted —
+but the system's is in the wrong place (it is not the notch) and ours is the only
+one that can sit in the cutout's own band. The real problem was cost, and that
+turned out to be a choice rather than a property:
 
-So closed, the island is the camera cutout and 2 pt either side: no pixels, invisible
-against the notch, 0.0% of a core. `WingContent`, `Equalizer` and the widening are
-deleted. This is also why there is no pause-grace, no strip, and no chin state to
-keep in step with the player — the OS owns that surface.
+| Implementation | Cost |
+| --- | --- |
+| SwiftUI `repeatForever` implicit animation | **9.0%** of a core |
+| `TimelineView` at 8 fps | 3.8% |
+| **Core Animation (`CABasicAnimation` on CALayers)** | **0.17%** |
+
+The first two repaint the island in-process every frame. Core Animation commits the
+animation to the window server, which interpolates it from then on, so the app is not
+woken per frame — which is exactly how the system's own indicator is cheap.
+
+No strip, no pause-grace and no chin state beyond `isPlaying`.
 
 ---
 
@@ -338,22 +343,11 @@ evidence is text appearing in an app you were already looking at. Click a row an
 nothing acknowledges it, so it reads as "did that do anything?" — and ⌥-click is
 indistinguishable from a failure to paste.
 
-**The previous design no longer works.** It planned to show the tick in the chin —
-the closed notch widening for a second. The chin has since been deleted, because
-macOS draws its own now-playing live activity in that space (§6), so there is
-nothing to reuse and a tick there would sit next to the system's pill.
+**The chin is the place for it** (§6): the closed island already widens while music
+plays, so a paste shows `✓ Pasted` (or `Copied` for ⌥-click) by widening for ~1 s
+with a tick instead of artwork. No new geometry — the mechanism exists and is cheap.
 
-Two options, neither chosen yet:
-
-| Option | Detail | Cost |
-| --- | --- | --- |
-| **Transient widening** | The closed island widens for ~1 s showing `✓ Pasted` or `Copied` — a cutout-sized chin, used only for this, never for media | Reintroduces a small amount of the geometry just deleted, but for a different purpose and for one second |
-| **Hold the panel** | Delay the collapse ~600 ms and show the tick over the row | No new geometry, but every paste feels slower and the ⌘V lands late |
-
-Transient widening is the better trade: the keystroke keeps its timing, and 1 s of a
-tick does not compete with the live activity because it is not media.
-
-Constraints either way:
+Constraints:
 
 - **Two outcomes, two signals.** ✓ Pasted, and "Copied" for ⌥-click.
 - **Toggleable** from the clipboard header and persisted, next to the window picker.
@@ -580,10 +574,10 @@ which is too narrow to design around.
 SwiftUI content, and the window must not be click-through mid-drag. Keep the
 closed idle window (`notch + 4` wide — physical cutout only, nothing clickable
 behind it) permanently interactive (`ignoresMouseEvents = false`) as an
-`NSDraggingDestination`. Closed, the window is only the cutout, so it is always
-interactive — there is no playing chin to click through any more (§6). Supporting
-drag-in was once expected to need a separate cutout-only drop window; with the chin
-deleted that problem disappeared.
+`NSDraggingDestination`. When music is playing while closed, the `249 pt` chin
+overlaps live menu-bar space and stays click-through (`ignoresMouseEvents = true`);
+drag-in still works because the drag detector expands the island before the pointer
+reaches it.
 
 **Selecting the shelf is not enough — `expand()` overwrites it.** `IslandModel`
 sets `activePanel = defaultPanel` inside `expand()` before flipping `expanded`.
@@ -941,12 +935,12 @@ the panel shows stale commands and raises a notice strip) and
 
 ## 9. Risks
 
-1. **Independent redraw drivers — one was expensive, and it is now gone.**
-   Measured with CPU-time deltas rather than `ps %cpu` (a lifetime average, which
-   hid this for days): the closed playing island cost **9.0%** of a core because the
-   chin's three bars animated with `repeatForever`, redrawing at display rate. An
-   8 fps timer took it to 3.8%. Then the chin itself was deleted in favour of the
-   system live activity, and the state now costs **0.0%**.
+1. **Independent redraw drivers — one was expensive; now it is not.** Measured
+   with CPU-time deltas rather than `ps %cpu` (a lifetime average, which hid this
+   for days), with music playing and the island closed: **9.0%** of a core with the
+   chin's bars on a SwiftUI `repeatForever` animation, 3.8% on an 8 fps
+   `TimelineView`, **0.17%** on Core Animation. The first two repaint in-process
+   every frame; CA hands the animation to the window server.
    What remains: the marquee (only inside `MusicPanel`, only while expanded), the
    progress bar (1 Hz), and the history ages (1/min). Expanded costs 0.9%, closed
    and idle 0.1%.
