@@ -7,8 +7,22 @@ import Foundation
 /// already maintains — so the watcher starts and stops with the panel, which is
 /// the normal provider lifecycle.
 final class TerminalService: ObservableObject {
-    @Published private(set) var entries: [TerminalEntry] = []
+    /// Most recently used first: this is a history view, so file position leads
+    /// and the use count is the secondary signal.
+    ///
+    /// Sorted here rather than in the view. `body` cannot sort it, because the
+    /// panel re-renders on every model change — including the 1.5 s player poll —
+    /// so ~330 entries were being re-sorted several times a second.
+    @Published private(set) var entries: [TerminalEntry] = [] {
+        didSet { frequent = TerminalHistory.ranked(entries, limit: Self.frequentLimit) }
+    }
     @Published private(set) var notice: String?
+
+    /// Top entries for the chip strip, kept in step with `entries` for the same
+    /// reason as the sort above.
+    private(set) var frequent: [TerminalEntry] = []
+
+    private static let frequentLimit = 3
 
     private let rules: IgnoreRules
     private var source: DispatchSourceFileSystemObject?
@@ -79,7 +93,9 @@ final class TerminalService: ObservableObject {
         let text = String(data: data, encoding: .utf8)
             ?? String(decoding: data, as: UTF8.self)
 
-        entries = TerminalHistory.parse(text).filter { !rules.ignores($0.command) }
+        entries = TerminalHistory.parse(text)
+            .filter { !rules.ignores($0.command) }
+            .sorted { $0.lastPosition > $1.lastPosition }
         notice = Self.flushNotice()
     }
 
@@ -94,10 +110,5 @@ final class TerminalService: ObservableObject {
             return nil
         }
         return message
-    }
-
-    /// Top entries for the chip strip.
-    func frequent(limit: Int = 3) -> [TerminalEntry] {
-        TerminalHistory.ranked(entries, limit: limit)
     }
 }

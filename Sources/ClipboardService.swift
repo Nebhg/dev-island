@@ -10,8 +10,21 @@ import Foundation
 /// read when the count actually moved. Every other provider starts and stops with
 /// its panel.
 final class ClipboardService: ObservableObject {
-    @Published private(set) var entries: [ClipEntry] = []
+    @Published private(set) var entries: [ClipEntry] = [] {
+        didSet { frequent = Frecency.ranked(entries, limit: Self.frequentLimit) }
+    }
     @Published private(set) var canAutoPaste = AccessibilityPaster.canPost
+
+    /// Top entries for the chip strip, kept in step with `entries` instead of
+    /// re-ranked inside `body`. The panel rebuilt this list on every render — and
+    /// it renders on every player poll, so up to 300 entries were sorted twice a
+    /// second to produce three chips.
+    ///
+    /// The ranking has a 14-day half-life, so holding it for the length of a
+    /// session is not meaningful staleness.
+    private(set) var frequent: [ClipEntry] = []
+
+    private static let frequentLimit = 3
 
     private let store = ClipboardStore()
     private var timer: Timer?
@@ -119,10 +132,5 @@ final class ClipboardService: ObservableObject {
     func clear() {
         store.clear()
         entries = []
-    }
-
-    /// Most-used, most-recent first. Drives the chip strip.
-    func frequent(limit: Int = 3) -> [ClipEntry] {
-        Frecency.ranked(entries, limit: limit)
     }
 }

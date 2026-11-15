@@ -274,9 +274,6 @@ struct GlassSurface: View {
     }
 }
 
-/// Compact now-playing row shown above every non-music panel, so playback stays
-/// reachable without giving up the width a list needs. Only drawn when there is
-
 /// Shown when a provider reports its panel is degraded rather than broken.
 struct NoticeStrip: View {
     let text: String
@@ -297,25 +294,6 @@ struct NoticeStrip: View {
 }
 
 
-/// Stand-in for the panels arriving in phases 3–4.
-struct PlaceholderPanel: View {
-    let panel: PanelID
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: panel.symbol)
-                .font(.system(size: 18, weight: .regular))
-                .foregroundStyle(.white.opacity(0.25))
-            Text(panel.title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
-            Text("Not wired up yet")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.3))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
 
 // MARK: - Open: shelf
 
@@ -731,7 +709,7 @@ struct ClipboardPanel: View {
     /// chip sizes were what made the old strip look messy.
     private var chipRow: some View {
         HStack(spacing: 6) {
-            ForEach(clipboard.frequent()) { entry in
+            ForEach(clipboard.frequent) { entry in
                 Button { paste(entry) } label: {
                     HStack(spacing: 5) {
                         Image(systemName: entry.kind.symbol)
@@ -873,12 +851,6 @@ struct TerminalPanel: View {
     @ObservedObject var model: IslandModel
     @ObservedObject var terminal: TerminalService
 
-    /// Most recently used first — this is a history view, so recency leads and
-    /// the use count is the secondary signal.
-    private var ordered: [TerminalEntry] {
-        terminal.entries.sorted { $0.lastPosition > $1.lastPosition }
-    }
-
     var body: some View {
         VStack(spacing: 6) {
             if !terminal.entries.isEmpty {
@@ -913,7 +885,7 @@ struct TerminalPanel: View {
 
     private var chipRow: some View {
         HStack(spacing: 6) {
-            ForEach(terminal.frequent()) { entry in
+            ForEach(terminal.frequent) { entry in
                 Button { paste(entry) } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "terminal")
@@ -949,7 +921,7 @@ struct TerminalPanel: View {
     private var list: some View {
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(spacing: 1) {
-                ForEach(ordered) { entry in
+                ForEach(terminal.entries) { entry in
                     TerminalRow(entry: entry) { paste(entry) }
                         .contextMenu {
                             Button("Copy") { model.clipboard.writeText(entry.command) }

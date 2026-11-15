@@ -225,6 +225,10 @@ is the trade for not having chrome on the lists.
 - Skip when the frontmost app is in a blocklist — seeded with password managers
   (1Password, Bitwarden, Keychain Access) if installed.
 - Never persist anything matched by the secret heuristic below; write `clipboard.json` with `0600` file permissions.
+  Both stores write through `AtomicJSON.write` — encode, write a temp file, chmod
+  it, then `replaceItemAt`. The chmod has to land on the **temp** file: creating the
+  real file and fixing its mode afterwards leaves a window where clipboard history
+  is world-readable.
 
 ### Entry model
 
