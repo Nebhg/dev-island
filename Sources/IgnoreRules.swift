@@ -29,11 +29,7 @@ final class IgnoreRules {
     private var regexes: [NSRegularExpression] = []
 
     init(directory: URL? = nil) {
-        let base = directory ?? FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Dev Island", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        url = base.appendingPathComponent("ignore-rules.txt")
+        url = AppSupport.directory(override: directory).appendingPathComponent("ignore-rules.txt")
         load()
     }
 

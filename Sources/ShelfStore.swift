@@ -79,11 +79,7 @@ final class ShelfStore: ObservableObject {
     private let url: URL
 
     init(directory: URL? = nil) {
-        let base = directory ?? FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Dev Island", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        url = base.appendingPathComponent("shelf.json")
+        url = AppSupport.directory(override: directory).appendingPathComponent("shelf.json")
         load()
     }
 
@@ -181,18 +177,8 @@ final class ShelfStore: ObservableObject {
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(items) else { return }
-        let temp = url.appendingPathExtension("tmp")
-        do {
-            try data.write(to: temp, options: .atomic)
-            // Write, then chmod: creating with default permissions and fixing them
-            // afterwards leaves a window where the file is world-readable.
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600], ofItemAtPath: temp.path
-            )
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
-        } catch {
-            try? FileManager.default.removeItem(at: temp)
-        }
+        // Same permissions as the clipboard: file names are a record of what the
+        // user was working on.
+        AtomicJSON.write(items, to: url)
     }
 }

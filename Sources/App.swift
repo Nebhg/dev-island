@@ -31,10 +31,7 @@ struct IslandApp {
     /// come back. Fails open if the lock file cannot be created, because refusing
     /// to start is worse than a duplicate.
     private static func acquireInstanceLock() -> Bool {
-        let base = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Dev Island", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        let base = AppSupport.directory()
 
         let fd = open(base.appendingPathComponent("instance.lock").path, O_CREAT | O_RDWR, 0o644)
         guard fd >= 0 else { return true }

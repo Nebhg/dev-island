@@ -97,11 +97,7 @@ final class ClipboardStore {
     private var saveWork: DispatchWorkItem?
 
     init(directory: URL? = nil) {
-        let base = directory ?? FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Dev Island", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        url = base.appendingPathComponent("clipboard.json")
+        url = AppSupport.directory(override: directory).appendingPathComponent("clipboard.json")
         load()
     }
 
@@ -218,18 +214,7 @@ final class ClipboardStore {
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        // Write then chmod: creating the file with default permissions and fixing
-        // them afterwards leaves a window where it is world-readable.
-        let temp = url.appendingPathExtension("tmp")
-        do {
-            try data.write(to: temp, options: .atomic)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600], ofItemAtPath: temp.path
-            )
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: temp)
-        } catch {
-            try? FileManager.default.removeItem(at: temp)
-        }
+        // `0600`: clipboard history is the most sensitive thing this app holds.
+        AtomicJSON.write(entries, to: url)
     }
 }
