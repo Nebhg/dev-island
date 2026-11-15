@@ -359,8 +359,8 @@ downwards for the duration while the shape stays the island's size:
 `IslandModel.windowSize` is what the controller sizes to, `islandSize` still drives
 the shape. Transparent band, click-through while it is up.
 
-Toggleable from the clipboard header (a circled tick beside the autopaste pill),
-persisted; off means no toast at all.
+Always shown. A toggle existed for it in the header for one round and was removed:
+an acknowledgement you have to switch on is one you have to remember exists.
 
 ### Timing
 
@@ -924,7 +924,7 @@ the fastest way to inspect what a player is publishing:
 | 5.6 | ~~`24h / 7d / 30d / All` windows on both history panels; `EXTENDED_HISTORY`; `ISLAND_DATA_DIR` sandbox~~ **done, verified against invented data** | — |
 | 6 | ~~Media transport: vendored `mediaremote-adapter` built from source, streamed through `MediaStream`~~ **done and verified with a real browser session** | — |
 | 7 | ~~Artwork arriving in a title-less diff was dropped~~ **done** — patches now applied; browser thumbnails work | — |
-| 8 | ~~Paste confirmation: a toast under the island, toggleable from the clipboard header~~ **done, verified** | — |
+| 8 | ~~Paste confirmation: a toast under the island saying what the click did~~ **done, verified by use** | — |
 | 9 | ~~One music-panel size; the tile follows the artwork's aspect so a thumbnail is not cropped~~ **done, verified with a live session** | — |
 | 10 | ~~View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader`~~ **done, pixel-verified** (§13) | — |
 
@@ -1052,7 +1052,7 @@ any of them can be reversed.
 - **Signing identity:** Self-signed Code Signing certificate (`Dev Island Local Signing`), not ad-hoc, so TCC Accessibility and Automation grants survive rebuilds.
 - **Clipboard capture while closed:** Accepted (`0.4 s` `changeCount` integer compare).
 - **Auto-paste is a preference, not a constant.** A pill labelled **Autopaste** with **On** or **Off** in both history headers — named for the setting rather than for the outcome, because "Paste / Copy" read as an action button rather than a state. Persisted; ⌥-click remains per-click copy-only. One setting shown on both panels.
-- **Paste confirmation lives in the closed notch, not in the panel.** The panel is gone by the time ⌘V lands, so the acknowledgement has to survive the collapse: the chin widens for ~1 s with ✓ Pasted, or "Copied" for ⌥-click. Toggleable from the clipboard header and off means off — no chin at all. Phase 8.
+- **Paste confirmation is a toast under the island, not a tick in the chin.** The panel is gone by the time ⌘V lands, so the acknowledgement has to survive the collapse. It says what happened — `Auto-pasted` or `Copied to clipboard` — because that is the question, and the chin's two 32 pt wings beside the cutout cannot hold a sentence. Always shown; a toggle for it was tried and removed.
 - **Testing never touches real data.** `ISLAND_DATA_DIR` redirects every store plus the instance lock, and `ISLAND_HISTORY` points the terminal panel at a fixture. The time windows were verified that way; the shell history and `clipboard.json` were confirmed untouched afterwards.
 - **History windows are a filter, never retention.** `24h / 7d / 30d / All` per panel, applied to both the list and the chips. Nothing is deleted; a shorter clipboard cap is the separate, safe lever if storage ever needs to shrink.
 - **Panel ranking:** Highlight by frecency (`uses × 0.5 ^ (days / 14)`), never filter by frequency. The only deny-list is the terminal panel's manual trivia list (§4); the clipboard panel has none, because any copied text is potentially worth pasting back.
