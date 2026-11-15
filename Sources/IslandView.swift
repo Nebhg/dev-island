@@ -274,6 +274,27 @@ struct GlassSurface: View {
     }
 }
 
+/// Auto-paste on/off, in a history panel's header.
+///
+/// One setting, shown on both history panels: a switch you can only reach from the
+/// clipboard panel is invisible while you are looking at the terminal.
+struct PasteToggle: View {
+    let enabled: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            Image(systemName: enabled ? "bolt.fill" : "bolt.slash")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(enabled ? 0.9 : 0.3))
+                .frame(width: 16, height: 14)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(enabled ? "Auto-paste on — click to copy only" : "Copy only — click to auto-paste")
+    }
+}
+
 /// The 24h / 7d / 30d / All control in a history panel's header.
 ///
 /// Four small buttons rather than a `Picker`, because a segmented control inside
@@ -734,6 +755,8 @@ struct ClipboardPanel: View {
                 .tracking(0.6)
                 .foregroundStyle(.white.opacity(0.3))
             Spacer(minLength: 0)
+            PasteToggle(enabled: model.autoPasteEnabled) { model.autoPasteEnabled.toggle() }
+                .padding(.trailing, 8)
             HistoryWindowPicker(window: clipboard.window) { clipboard.window = $0 }
         }
         .padding(.leading, 8)
@@ -921,6 +944,8 @@ struct TerminalPanel: View {
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.22))
                 .padding(.trailing, 10)
+            PasteToggle(enabled: model.autoPasteEnabled) { model.autoPasteEnabled.toggle() }
+                .padding(.trailing, 8)
             HistoryWindowPicker(window: terminal.window) { terminal.window = $0 }
         }
         .padding(.leading, 8)

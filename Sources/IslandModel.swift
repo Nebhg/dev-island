@@ -27,6 +27,29 @@ final class IslandModel: ObservableObject {
     /// needing `setopt INC_APPEND_HISTORY`. Rendered as a strip above content.
     @Published var panelNotice: String?
 
+    /// Auto-paste on every click. Off means copy-only, which is the same thing
+    /// ⌥-click does — so the modifier keeps working either way.
+    ///
+    /// Persisted: this is a preference about how the app behaves, not view state.
+    @Published var autoPasteEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(autoPasteEnabled, forKey: Self.autoPasteKey)
+            panelNotice = pastePermissionNotice
+        }
+    }
+
+    private static let autoPasteKey = "autoPasteEnabled"
+
+    /// The warning a history panel should show when a click will only copy.
+    ///
+    /// Shared by the clipboard and terminal panels: both paste, so a permission
+    /// problem is not a clipboard-only fact. Silent when auto-paste is off, because
+    /// then copy-only is what was asked for.
+    var pastePermissionNotice: String? {
+        guard autoPasteEnabled, !clipboard.canAutoPaste else { return nil }
+        return "Grant Accessibility to paste directly."
+    }
+
     /// Called synchronously whenever something that changes `islandSize` changes.
     /// Set by `IslandController` once its window exists.
     var onGeometryChange: (() -> Void)?
@@ -69,6 +92,7 @@ final class IslandModel: ObservableObject {
         let initial = (chosen == .music ? PanelID.clipboard : chosen) ?? .clipboard
         self.defaultPanel = initial
         self.activePanel = initial
+        self.autoPasteEnabled = UserDefaults.standard.object(forKey: Self.autoPasteKey) as? Bool ?? true
         self.terminal = TerminalService(rules: ignoreRules)
 
         player.$nowPlaying
@@ -161,7 +185,7 @@ final class IslandModel: ObservableObject {
     /// the user left it — there is no focus to restore.
     func pasteClipboard(_ entry: ClipEntry, autoPaste: Bool) {
         guard clipboard.write(entry) else { return }
-        deliverPaste(autoPaste: autoPaste)
+        deliverPaste(autoPaste: autoPaste && autoPasteEnabled)
     }
 
     /// Terminal commands paste with the trailing newline stripped: history is full
@@ -170,7 +194,7 @@ final class IslandModel: ObservableObject {
         var text = entry.command
         while text.hasSuffix("\n") || text.hasSuffix("\r") { text.removeLast() }
         guard clipboard.writeText(text) else { return }
-        deliverPaste(autoPaste: autoPaste)
+        deliverPaste(autoPaste: autoPaste && autoPasteEnabled)
     }
 
     private func deliverPaste(autoPaste: Bool) {

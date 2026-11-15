@@ -381,15 +381,21 @@ untested fallback would have been dead code pretending to be insurance.
 
 ### Permission handling
 
-- `CGPreflightPostEventAccess()` is the single source of truth for "can this
-  process post a synthetic key event". It checks without prompting.
-- `AXIsProcessTrusted()` alone is not sufficient and is not the gate for event
-  posting; if a prompt is wanted, use
-  `AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt: true])`.
-- Never block a click on a prompt. First run shows the notice strip; the click
-  path re-checks every time.
-- If the post is refused, fall back to copy-only and set `panelNotice` to
-  `"Grant Accessibility to paste directly."`.
+- **The preflight is advisory, not a gate.** `CGPreflightPostEventAccess()` was
+  treated as the single source of truth, and it lied: after the app moved to
+  `~/Applications` the panel showed "Grant Accessibility to paste directly" while
+  pasting worked normally. The check and reality disagree, so `postPaste()` now
+  always attempts the event and the preflights only decide whether to *warn*.
+  `CGPreflightPostEventAccess() || AXIsProcessTrusted()` — either counts, because
+  that combination matches observed behaviour.
+- Never block a click on a prompt. The click path tries every time.
+- A failed post sets `panelNotice` to `"Grant Accessibility to paste directly."`.
+  Shown on **both** history panels: the terminal pastes too, so a permission
+  problem was never a clipboard-only fact.
+- **Auto-paste has a toggle** (the bolt in both history headers, persisted in
+  `UserDefaults`, on by default). Off means copy-only, the same result as ⌥-click,
+  which keeps working either way. No warning is shown when it is off — copy-only is
+  then what was asked for.
 
 ---
 
@@ -996,6 +1002,7 @@ any of them can be reversed.
 - **Terminal panel click:** Auto-paste with trailing newline stripped so a stray Return cannot execute a pasted command.
 - **Signing identity:** Self-signed Code Signing certificate (`Dev Island Local Signing`), not ad-hoc, so TCC Accessibility and Automation grants survive rebuilds.
 - **Clipboard capture while closed:** Accepted (`0.4 s` `changeCount` integer compare).
+- **Auto-paste is a preference, not a constant.** The bolt in both history headers toggles it; ⌥-click remains per-click copy-only. One setting, shown on both panels, because a switch only reachable from the clipboard panel is invisible while you are looking at the terminal.
 - **Paste confirmation lives in the closed notch, not in the panel.** The panel is gone by the time ⌘V lands, so the acknowledgement has to survive the collapse: the chin widens for ~1 s with ✓ Pasted, or "Copied" for ⌥-click. Toggleable from the clipboard header and off means off — no chin at all. Phase 7.
 - **Testing never touches real data.** `ISLAND_DATA_DIR` redirects every store plus the instance lock, and `ISLAND_HISTORY` points the terminal panel at a fixture. The time windows were verified that way; the shell history and `clipboard.json` were confirmed untouched afterwards.
 - **History windows are a filter, never retention.** `24h / 7d / 30d / All` per panel, applied to both the list and the chips. Nothing is deleted; a shorter clipboard cap is the separate, safe lever if storage ever needs to shrink.
