@@ -146,21 +146,7 @@ final class IslandController {
         // poll, no panel provider. The chin still updates from notifications.
         model.$expanded
             .receive(on: RunLoop.main)
-            .sink { [weak self] expanded in
-                guard let self else { return }
-                self.pointerCapture = nil
-                if expanded {
-                    self.startSpotlightWatch()
-                    self.model.player.startPolling()
-                    self.hotKeys.install()
-                } else {
-                    self.stopSpotlightWatch()
-                    self.model.player.stopPolling()
-                    self.hotKeys.uninstall()
-                }
-                self.updateGeometry()
-                self.refreshMousePolicy()
-            }
+            .sink { [weak self] expanded in self?.handleExpansion(expanded) }
             .store(in: &cancellables)
 
         // Switching panel changes the island's size, so the window has to be
@@ -190,6 +176,13 @@ final class IslandController {
                 self?.refreshMousePolicy()
             }
             .store(in: &cancellables)
+
+        // `@Published` does not replay, so an island opened by a launch flag never
+        // produced the `$expanded` event and therefore never started polling. That
+        // is exactly what a screenshot session wants to look like, and it made the
+        // debug path behave differently from real use — which cost an afternoon of
+        // chasing "the music panel is not updating".
+        if model.expanded { handleExpansion(true) }
 
         // The shelf's height follows how many files are in it. `IslandModel` owns
         // that subscription and calls back through `onGeometryChange`, so this is
@@ -561,6 +554,26 @@ final class IslandController {
             guard !dropped, let previous, previous != .shelf else { return }
             self.model.selectPanel(previous)
         }
+    }
+
+    /// Everything that has to follow the open/closed state.
+    ///
+    /// One function rather than a closure body, because two callers need it: the
+    /// `$expanded` sink and the launch flags, which set `expanded` before the sink
+    /// exists.
+    private func handleExpansion(_ expanded: Bool) {
+        pointerCapture = nil
+        if expanded {
+            startSpotlightWatch()
+            model.player.startPolling()
+            hotKeys.install()
+        } else {
+            stopSpotlightWatch()
+            model.player.stopPolling()
+            hotKeys.uninstall()
+        }
+        updateGeometry()
+        refreshMousePolicy()
     }
 
     private func scheduleCollapse() {
