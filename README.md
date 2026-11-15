@@ -8,7 +8,7 @@ that appear while the island is closed.
 ![Clicking a clipboard row pastes it into the app you came from](docs/autopaste.gif)
 
 *A click pastes into whatever had focus; the toast under the notch says so. `⌃⌥↓`
-opens it from the keyboard, `⌃⌥→` cycles panels.*
+opens it from the keyboard and arms the arrows.*
 
 Source-only: there are no release binaries. Build it with `./build.sh` (below).
 
@@ -27,25 +27,29 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
 
 ![The four content panels in use](docs/panel-tour.gif)
 
-*Clipboard → Terminal → Shelf → Music, on `⌃⌥→`.*
+*Clipboard → Terminal → Shelf → Music. The arrows tour the two list panels; Shelf and
+Music are a click or `⌥3` / `⌥4`.*
 
 ## Using it
 
 - **Open** by hovering the notch; it closes shortly after the pointer leaves. It
   reopens on whichever panel you left it on, unless a fixed default is picked.
-- **Open from the keyboard** with `⌃⌥↓`, which toggles the island open or closed.
-- **Switch panels** with the icons either side of the cutout, `⌥1`–`⌥5`, or
-  `⌃⌥←` / `⌃⌥→` to cycle (also `⌥Tab` / `⌥⇧Tab`). The panel and cycle keys only
-  exist while the island is open; the open key and the clipboard shortcut are armed
-  all the time.
-- **Paste from history with `⌃⌘V`**, like ⊞V on Windows: the island opens on the
-  clipboard without the pointer, `⌃⌥←` / `⌃⌥→` choose a row, `⌥1`–`⌥5` switch to
-  another list and start at its first row, `↩` pastes into the app you were in,
-  `⌥↩` only copies, and `⎋`, a click elsewhere or switching apps ends it. The
-  terminal list is the same machinery, so a command costs no second shortcut:
-  `⌃⌘V`, then `⌥2`. Change the shortcut or switch it off in Settings or under
-  **Clipboard Shortcut** in the menu bar capsule. `↩` and `⎋` are the only chords
-  here with no modifier, and they are only taken while that mode is on.
+- **Open from the keyboard** with `⌃⌥↓`. It has three states: closed it opens on the
+  last panel and arms the keyboard; open it arms where it is; armed it closes.
+  Hovering never arms anything, so the bare keys below are only ever taken after this
+  deliberate press.
+- **Switch panels** with the icons either side of the cutout or `⌥1`–`⌥5`, which work
+  whenever the island is open. Once the keyboard is armed, `←` / `→` also cycle the
+  two list panels. There is no arrow path to Shelf, Music or Settings — those are
+  `⌥3`, `⌥4` and `⌥5`, and reaching one ends the keyboard mode.
+- **Work the history from the keyboard**, like ⊞V on Windows. `⌃⌥↓` arms it on
+  whichever list is showing; `⌃⌘V` arms it on the clipboard from anywhere, which is
+  the fast path when you have just copied something. Then `↑` / `↓` choose a row,
+  `←` / `→` change list, `↩` pastes into the app you were in, and `⎋`, a click
+  elsewhere or switching apps ends it. The terminal list is the same machinery, so a
+  command costs no second shortcut: `⌃⌘V`, then `→`. Change the shortcut or switch it
+  off in Settings or under **Clipboard Shortcut** in the menu bar capsule.
+  `← → ↑ ↓ ↩ ⌤ ⎋` all carry no modifier, and are only taken while that mode is on.
 - **Click a row** to paste into whatever had focus, or copy. `⌥`-click always
   copies. The **Autopaste** pill toggles the default and is remembered; either way
   a short toast says what happened — `Auto-pasted` or `Copied to clipboard`.
@@ -69,6 +73,10 @@ Why the shortcuts sit on `⌃⌥` and `⌥` rather than `⌘1`–`⌘5` or `⌥�
 recorded in `PLAN.md` §2 ("Navigation"): macOS and most apps claim ⌘-number and
 ⌃-number first, and those win before a Carbon hotkey is consulted, so the shortcut
 would silently never arrive.
+
+There is no "shortcut taken" warning, and one should not be added. `RegisterEventHotKey`
+reports success for a chord another app already holds, so a warning keyed off its
+result could never fire — measured, see `PLAN.md` §2.
 
 ## Requirements
 

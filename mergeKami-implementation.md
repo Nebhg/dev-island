@@ -13,8 +13,8 @@ incomplete and this file is the correction.
 | 2 | `Register the mode's keys against the mode` | **built, uncommitted** — typechecks |
 | 3 | `Cycle the two list panels with the arrows` | committed `b917550` — typechecks |
 | 4 | `Drop the cycle chords and the Tab aliases` | committed `0769198` — typechecks |
-| 5 | `Arm the island from the toggle key` | **built, uncommitted** — typechecks |
-| 6 | `Document the keyboard layer that exists` | not started |
+| 5 | `Arm the island from the toggle key` | committed `166ec74` — typechecks |
+| 6 | `Document the keyboard layer that exists` | **built, uncommitted** |
 
 Nothing has been built into an app, installed, or run. Every "works" below means
 "typechecks and reads correctly", not "observed".
@@ -435,3 +435,117 @@ match what actually happens.
 ### Open, carried forward
 
 Auto-repeat unmeasured; GIFs undecided; the restore question above.
+
+---
+
+## Phase 6 — document the keyboard layer that exists
+
+**Plan:** §12 commit 6 — README, `PLAN.md`, and the `6f358ee` note.
+**Actually changed:** `README.md`, `PLAN.md`.
+
+### What was done
+
+`README.md`:
+
+| where | was | is |
+|---|---|---|
+| caption, `docs/autopaste.gif` | "`⌃⌥→` cycles panels" | "`⌃⌥↓` opens it from the keyboard and arms the arrows" |
+| caption, `docs/panel-tour.gif` | "Clipboard → Terminal → Shelf → Music, on `⌃⌥→`" | the tour, plus a note that the arrows cover the two lists and Shelf/Music are a click or `⌥3`/`⌥4` |
+| *Open from the keyboard* | "toggles the island open or closed" | the three states, and that hovering never arms |
+| *Switch panels* | "`⌥1`–`⌥5`, or `⌃⌥←`/`⌃⌥→` to cycle (also `⌥Tab`/`⌥⇧Tab`)" | `⌥1`–`⌥5` any time; arrows only while armed; no arrow path to Shelf/Music/Settings |
+| *Paste from history* | `⌃⌥←`/`⌃⌥→` choose a row, `⌥↩` copies | `↑`/`↓` rows, `←`/`→` lists, `↩` pastes, `⎋` etc. ends; `⌃⌘V` then `→` reaches the terminal |
+| *Why the shortcuts sit on `⌃⌥`* | — | added the paragraph about there being no "shortcut taken" warning, and why one cannot exist |
+
+`PLAN.md`:
+
+| where | change |
+|---|---|
+| §2 Navigation | the prose paragraph, the group table, and a new subsection on the mode group and the two chords that went |
+| §3 key table | rewritten for the new keys, plus three bullets: not clipboard-specific, the mode is not a selection, nothing is armed on hover |
+| §14 file table | `HotKeys.swift` row now lists the new groups |
+| §15 tail | "both cycle methods only while expanded" corrected, and a pointer to §16 |
+| **§16** | new — why the layer was replaced, the key table, the invariant, a measured/inferred/not table, and four open items |
+
+### Where reality differs from the plan
+
+**1. §16 is new; the plan did not ask for a new numbered section.** §12 said "README,
+PLAN.md, and the `6f358ee` note". A pointer note would have left the plan's own §2 and
+§3 contradicting the code with only a footnote. The document's purpose is to be the
+argument for the design; it cannot argue for a design that no longer exists. §16 also
+gives the reference in §2 something to point at.
+
+**2. The GIF captions were reworded rather than re-recorded.** The recordings still
+show `⌃⌥→`, and `panel-tour.gif` still walks four panels. Captions now describe what
+the panels are and what the arrows actually do, without claiming the GIF demonstrates a
+chord. That is honest but incomplete; the recordings are stale and the open item says so
+rather than pretending otherwise. Re-recording needs a build, a restart and a screen
+capture, none of which have happened.
+
+**3. The *#15* record was corrected rather than left alone.** Its closing verification
+list still named "both cycle methods", which no longer exist. Left as-is it would have
+been a checklist for a design that was gone. It now names the mode's keys and points at
+§16 for the rest.
+
+**4. README's panel-reopening bullet was left untouched.** It says the island "reopens
+on whichever panel you left it on", which is true, but a keyboard detour now counts as
+leaving it there — the item carried since phase 1. Deliberately not papered over with a
+parenthetical, because the behaviour is undecided. If the restore comes back, the
+sentence is already right; if it does not, it needs a clause. See below.
+
+### Verification
+
+Nothing to typecheck — documentation only. `swiftc -typecheck` still clean at this
+commit, since no source changed after phase 5.
+
+`grep -rn "⌃⌥←\|⌃⌥→\|⌥⇧Tab\|⌥Tab\|⌥↩" README.md PLAN.md` returns three lines, all of
+them explaining that those chords are gone.
+
+---
+
+## Where the series ended up
+
+Six commits, each typechecking alone:
+
+```
+166ec74 Arm the island from the toggle key
+0769198 Drop the cycle chords and the Tab aliases
+b917550 Cycle the two list panels with the arrows
+1a2b672 Register the mode's keys against the mode
+e0bd007 Make the keyboard mode a mode, not a selection
+c326208 Write the keyboard plan and its implementation record
+```
+
+The branch is `merge-kami`, now 13 commits ahead of `master` and still unpushed.
+`master` is unchanged.
+
+### What the plan got right
+
+- The mode/selection split as the central change, and the three bugs it fixes.
+- The group structure and the two-term registration condition.
+- `⌃C` as unacceptable, and copy-only as unnecessary once `↩` writes the pasteboard.
+- The list-panel restriction on arrows.
+
+### What the plan got wrong
+
+| plan | reality |
+|---|---|
+| "`keyboardMode = false` in `collapse()` and nowhere else" | one *assignment site*, two callers — `⌥3`–`⌥5` must end the mode without collapsing |
+| "delete `panelBeforeSelection`, it is what `reopensLastPanel` wants" | it is not; a shortcut detour now moves the persistent last panel |
+| phase 3 ships `ModeKey` cases with no producer | registration pulled forward so no commit has unreachable arms |
+| "delete the `⌥Tab` paragraph" | replaced with why the chord went; deleting the only record is how it comes back |
+| §8's slot table assumed one renumber | two, because phase 3 appends and phase 4 removes |
+| nothing about where `⌃⌥↓` lands | `keyboardLandingPanel` + `lastListPanel`, both new |
+
+### Still to do, in the order they matter
+
+1. **Build, install, launch.** Nothing in this pass has run. Every claim above is
+   typecheck and reading.
+2. **Held-arrow auto-repeat.** If Carbon does not repeat, `↑`/`↓` need a timer; this is
+   the difference between a list that scrolls and a list you press forty times.
+3. **The exit audit — the release gate.** After `⎋`, `↩`, a click elsewhere, `⌘Tab` and
+   the toggle key, confirm `←→↑↓↩⌤⎋` reach the frontmost app again. Any path that
+   leaves them captured is a blocker.
+4. **Decide the `⌃⌘V` restore.** Either restore `panelBeforeMode`, or add the clause to
+   the README that a keyboard detour counts as choosing a panel.
+5. **Re-record or cut `docs/panel-tour.gif`.** The captions no longer claim what the
+   recording shows, but the recording is still of the old chords.

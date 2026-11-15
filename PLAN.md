@@ -209,9 +209,9 @@ The band is measured from `activePanel.preferredSize`, not from the window, so t
 icons stay put even while the window is still the larger of the two sizes.
 
 **Keyboard shortcuts**, because the pointer is often nowhere near the notch:
-`⌃⌥↓` opens or closes the island, `⌥1`–`⌥5` jump straight to a panel in display
-order, `⌃⌥←` / `⌃⌥→` cycle (as do `⌥Tab` / `⌥⇧Tab`), and `⌃⌘V` opens the keyboard
-selection (§3).
+`⌃⌥↓` opens the island on its last panel and arms the keyboard, `⌥1`–`⌥5` jump
+straight to a panel in display order, and `⌃⌘V` arms the same mode landed on the
+clipboard (§3).
 `⌘1`–`⌘5` is what the hand reaches for and what the system takes first — ⌘-number
 and ⌃-number are claimed by tab switching and Spaces before a Carbon hotkey is
 consulted, so both the original `⌥⌘1`–`⌥⌘4` set and the later `⌘`-number attempt
@@ -226,16 +226,26 @@ groups**, each alive only while it can mean something:
 | Group | Lifetime | Contents |
 | --- | --- | --- |
 | always | the process | `⌃⌥↓`; the clipboard shortcut, when it is on |
-| panel | while expanded | `⌥1`–`⌥5`, `⌃⌥←/→`, `⌥Tab` / `⌥⇧Tab` |
-| picker | while a history row is selected | `↩`, `⌥↩`, `⎋` |
+| panel | while expanded | `⌥1`–`⌥5` |
+| mode | while the keyboard mode is armed | `←`, `→`, `↑`, `↓`, `↩`, `⌤`, `⎋` |
 
 One Carbon handler serves all three for the process lifetime, and `Slot` is a single
 raw-value namespace so a hotkey id identifies exactly one chord — the merge in §15
 had to renumber it by hand, because two branches had inserted into it at different
-offsets. Panel-group chords are overloaded rather than duplicated: `⌃⌥←/→` cycles
-panels normally and moves the selected row while the keyboard selection is on, so
-row movement costs no extra registration. The costs are written next to the keys in
-`Sources/HotKeys.swift`, including the one deliberate exception (`⌥Tab`).
+offsets, and §16 renumbered it again when the cycle chords went.
+
+The mode group is the only one whose keys carry no modifier, and its lifetime is
+what makes that affordable. It is installed from `$keyboardMode` combined with
+`$expanded` and uninstalled from `HotKeys.uninstall()` as well, so a subscription
+that stops firing cannot leave the arrows stolen with no island on screen. Hovering
+never arms the mode, so the bare keys are taken only after a deliberate press.
+
+Two chords were here and are not any more, because both were worse than they looked:
+`⌃⌥←/→` for cycling (three keys for an action the arrows now do, and it had to be
+overloaded — the same chord meant "cycle" or "move the row" depending on a mode the
+user could not see) and `⌥Tab`/`⌥⇧Tab` (Option-Tab taken from every app while the
+island was open). Panels are reachable by number at any time and by arrow once the
+mode is armed.
 
 **Measured, macOS 26: registration success is not evidence of availability.**
 `RegisterEventHotKey` returns `noErr` and a usable reference for a chord another
@@ -457,16 +467,25 @@ modelled on Windows' ⊞V:
 
 | Key | Does |
 | --- | --- |
-| `⌃⌘V` | Opens the island on the clipboard with the first row selected; pressed again, closes it |
-| `⌃⌥←` / `⌃⌥→` | Move the selection; the list scrolls only as far as it must |
-| `⌥1`–`⌥5` | Switch panel, and re-target the selection to that list's first row |
+| `⌃⌥↓` | Opens the island on the last list panel and arms the mode; when already open it arms; when armed it closes |
+| `⌃⌘V` | The same mode, landed on the clipboard. Pressed again, closes it |
+| `↑` / `↓` | Move the selection; the list scrolls only as far as it must |
+| `←` / `→` | Switch between the two list panels, keeping the mode |
+| `⌥1`–`⌥5` | Jump to a panel. `⌥1` / `⌥2` re-target the selection to that list's first row; `⌥3`–`⌥5` end the mode |
 | `↩`, keypad Enter | Paste the selection — the click path, so Autopaste applies |
-| `⌥↩` | Copy only, like ⌥-click |
 | `⎋`, a click elsewhere, switching apps | End the mode |
 
-- **It is not clipboard-specific.** `listSelection` names a panel and a row, so the
-  terminal list is driven by the same machinery; `⌃⌘V` then `⌥2` reaches a command
-  with no second shortcut and no second registration set.
+- **It is not clipboard-specific.** `keyboardMode` is the mode and `listSelection`
+  names a panel and a row, so the terminal list is driven by the same machinery;
+  `⌃⌘V` then `→` reaches a command with no second shortcut and no second registration
+  set.
+- **The mode is not a selection.** They were one thing (`listSelection != nil`) and
+  that was wrong twice over: an empty list has no row id and a panel with no rows has
+  no list, so both used to end the mode. An empty list now stays in the mode with
+  nothing to paste, and the arrows only ever walk the two list panels.
+- **Nothing is armed on hover.** The bare keys are taken only after `⌃⌥↓` or `⌃⌘V`,
+  which is the whole reason they can be bare. A pointer resting near the notch is not
+  a request to take the arrow keys from every other app.
 - **The selection is an id, not an index.** Both lists change under it — a new copy
   arrives at row 0, zsh appends a command — and an index silently moves the
   highlight onto a different row while the user is not looking. The index is derived
@@ -1550,7 +1569,7 @@ One line per file, so a reviewer can go straight to the part they care about.
 | `IslandModel.swift` | All state: panel selection, last-panel preference, geometry, keyboard selection, paste delivery, `PlayerService` (sources, polling, toast). The only `ObservableObject` the views observe besides the services |
 | `IslandView.swift` | `IslandRootView`, `NotchShape`, `IslandMetrics`, the shell, the shelf/music/settings panels, the toast, the chips/pills/picker views, `AgeView` |
 | `Panels.swift` | `PanelID` (sizes, symbols, order, `contentPanels`), `PanelProvider` protocol, `PanelHost` lifecycle, the five providers |
-| `HotKeys.swift` | Carbon `RegisterEventHotKey`, three groups: `⌃⌥↓` + clipboard shortcut (process lifetime), `⌥1–5` + `⌃⌥←/→` + `⌥Tab` (while expanded), `↩`/`⌥↩`/`⎋` (while a row is selected). `ClipboardShortcut` presets |
+| `HotKeys.swift` | Carbon `RegisterEventHotKey`, three groups: `⌃⌥↓` + clipboard shortcut (process lifetime), `⌥1–5` (while expanded), `←`/`→`/`↑`/`↓`/`↩`/`⌤`/`⎋` (while the keyboard mode is armed). `ClipboardShortcut` presets |
 | `FullscreenSupport.swift` | SkyLight space attach so the island survives fullscreen Spaces |
 | `SpotlightState.swift` | Is Spotlight open — drives suppression |
 
@@ -1698,6 +1717,97 @@ arm64-apple-macos26.0 -framework AppKit -framework SwiftUI Sources/*.swift` afte
 each commit. That is the whole of it: nothing in this pass has been run on a notched
 display, so everything in *Using it* about the keyboard selection is design intent
 until it is. The verification list is in `README.md`'s own terms: `⌃⌥↓` from another
-app, `⌥1`–`⌥5`, both cycle methods only while expanded, `⌃⌘V` while closed, focus
-staying in the original app, every exit unregistering `↩`/`⎋`, a mid-selection copy
-not moving the highlight, and a move-only drag being refused.
+app, `⌥1`–`⌥5`, the mode's keys only while armed, `⌃⌘V` while closed, focus staying
+in the original app, every exit unregistering them, a mid-selection copy not moving
+the highlight, and a move-only drag being refused.
+
+§16 replaced the keyboard layer after this pass. The rest of §15 stands; where it
+describes `⌃⌥←/→` or `⌥Tab`, read it as the history of a decision that was reversed.
+
+---
+
+## 16. The keyboard layer, replaced (15 Nov)
+
+Everything in this plan that described `⌃⌥←/→` cycling, `⌥Tab` / `⌥⇧Tab`, `⌥↩`, or a
+"keyboard selection" that *was* the mode is superseded here. The merge itself (§15)
+stands: only the keyboard layer was rebuilt, on top of it.
+
+### Why it was replaced
+
+The mode's lifetime was `listSelection != nil` — the mode was the selection. Three
+consequences, none of them visible until you drew them out:
+
+- `rowCount` is 0 for Shelf, Music and Settings, and `retargetSelection` ended the mode
+  when the first row id was empty. So cycling landed on a panel with no rows and
+  dropped the keys. `→` from the terminal did exactly that.
+- An **empty** list stored a `""` id, every lookup failed, and paste exited. Entering
+  on an empty clipboard put you in a mode that ended on the first key.
+- `cyclePanel` walked `PanelID.allCases`, so the destination depended on declaration
+  order rather than on what could hold a row.
+
+None of that is a bug in one line; it is the model. `keyboardMode` is now the mode and
+`listSelection` is only ever a row.
+
+### The keys
+
+| Key | When | Does |
+| --- | --- | --- |
+| `⌃⌥↓` | always | closed: open on the last list and arm · open: arm · armed: close |
+| `⌃⌘V` | always | the same mode, landed on the clipboard |
+| `⌥1`–`⌥5` | while expanded | jump to a panel; `⌥1`/`⌥2` keep the mode, `⌥3`–`⌥5` end it |
+| `←` / `→` | while armed | switch between the two list panels |
+| `↑` / `↓` | while armed | move the selected row |
+| `↩`, `⌤` | while armed | paste, with Autopaste applying |
+| `⎋` | while armed | end the mode and close |
+
+Removed, and not replaced: `⌃⌥←` / `⌃⌥→`, `⌥Tab` / `⌥⇧Tab`, `⌥↩`, and `⌃C` / `⌘C` —
+the last two never shipped, but both were proposed and both were why the copy chord
+was reconsidered: `⌃C` is SIGINT in a terminal and the mode is armed exactly when a
+terminal is focused, and `⌘C` was unnecessary once `↩` writes the pasteboard on its
+way to pasting. ⌥-click still copies without pasting.
+
+Shelf and Music have no arrow path any more. That is the trade for the arrows being
+bare: cycling had to stop including panels that would end the mode.
+
+### The invariant
+
+The mode's keys are global and carry no modifier, so the only thing making them
+affordable is that they cannot outlive the mode. Three properties, together:
+
+1. **One assignment site.** `endKeyboardMode()` is the only writer of
+   `keyboardMode`; `collapse()` and `retargetSelection` call it. Collapse is reached
+   from every hiding path; a panel change to a non-list ends the mode without closing.
+2. **It runs above `collapse()`'s guard.** A collapse arriving with `expanded` already
+   false must still disarm.
+3. **Registration needs both terms.** The sink is `$keyboardMode` combined with
+   `$expanded`, and `HotKeys.uninstall()` clears the group as well, so a subscription
+   that stops firing leaves nothing behind that the next collapse cannot undo.
+
+### Measured, inferred, and not
+
+| | |
+| --- | --- |
+| `RegisterEventHotKey` still returns `noErr` for taken and system chords | **measured** (§2) — unchanged by this work |
+| Registration is now driven by `keyboardMode && expanded` | **verified by reading and typecheck**, not by observation |
+| Hovering does not install the mode's keys | **by construction** — nothing sets `keyboardMode` on the hover path |
+| Every exit unregisters the mode's keys | **design intent** — the exit list is `collapse()` and a non-list panel; untested |
+| A held `↓` repeats | **unknown** — Carbon may deliver one event per down-stroke |
+| The mode's arrows reach an empty list without ending it | **by construction** — `retargetSelection` keeps the `""` id |
+
+Nothing in this section has been run. No build has been installed, and no commit on
+this branch has been through a launch.
+
+### Open
+
+- **A held arrow may not repeat.** If Carbon delivers one event per press, the list
+  moves one row per press and this needs a timer. This is the first thing to test.
+- **`⌃⌘V` no longer puts the panel back.** The mode used to restore the panel it
+  detoured from; that was deleted with `endKeyboardSelection`. Because `activePanel`
+  persists, a shortcut detour now moves the panel hover reopens on. `⌃⌥↓` has the same
+  effect and it is intended there. Undecided whether it should be for `⌃⌘V`.
+- **The two recordings predate this.** Both GIFs are captioned with `⌃⌥→`, and
+  `docs/panel-tour.gif` walks Clipboard → Terminal → Shelf → Music, which the arrows
+  can no longer do. The captions were reworded; the recordings were not re-shot.
+- **`player.startPolling()` runs on every expand**, not only on the Music panel
+  (`IslandController.swift:842`). It contradicts the single-lifecycle rule in §2.
+  Pre-existing, separate from this work.
