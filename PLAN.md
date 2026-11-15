@@ -1277,30 +1277,24 @@ the window grew, clipping the new row. The subscription did move into
 `IslandModel`, but for that reason. **Anything that changes `islandSize` needs
 both** the re-publish and the geometry call — §2.
 
-### 1B — the deferred extraction
+### 1B — the extraction, done
 
-Four duplicated views across `ClipboardPanel`, `TerminalPanel` and `ShelfPanel`:
+Four pieces, extracted to `Sources/PanelChrome.swift`:
 
 | View | Copies | Notes |
 | --- | --- | --- |
-| Empty state | 2 | Clipboard and terminal only; both are now *filter-aware*, so the strings have to be parameters, not baked in |
-| Frequent chip | 2 | Identical pill: 24 pt tall, radius 7, `0.055` fill, `0.07` stroke, 9 pt icon, 11 pt label |
-| History row | 2 | 26 pt, `8/14` padding, hover fill, 10 pt icon at width 13, 12 pt middle-truncated label |
-| Section header | 3 | 11 pt semibold, tracking 0.6, `0.3` opacity, 14 pt tall, 8 pt leading |
+| `PanelSectionHeader(title:trailing:)` | 3 | 11 pt semibold, tracking 0.6, `0.3` opacity, 14 pt tall, 8 pt leading, 6 pt trailing |
+| `PanelEmptyState(symbol:title:subtitle:)` | 2 | Text is passed in: both history panels distinguish "empty" from "filtered out" |
+| `FrequentChip(symbol:text:monospaced:help:action:)` | 2 | 24 pt strip, 22 pt pills, radius 7, `0.055` fill, `0.07` stroke |
+| `HistoryRow(symbol:text:monospaced:help:action:trailing:)` | 2 | 26 pt, `8/14` padding, hover fill, 13 pt icon, middle-truncated 12 pt label |
 
-Deferred rather than skipped because it is ~200 lines of view code whose failure
-mode is **subtle spacing drift** — a 1 pt padding difference that no compiler and
-no test catches. It wants before/after captures of all three panels, which is more
-work than the extraction itself.
+`HistoryRow` takes a trailing `@ViewBuilder` because that is the only place the two
+rows differed — a `TimelineView(.everyMinute)` age on one, `"%d×"` on the other.
+The age helper became an `Age` enum; `ClipEntry.isMonospaced` carries the
+command/code/path face rule.
 
-Shape, so it does not get re-derived:
-
-```swift
-PanelEmptyState(symbol: String, title: String, subtitle: String)
-FrequentChip(symbol: String, text: String, monospaced: Bool, help: String, action: () -> Void)
-HistoryRow(icon: String, text: String, monospaced: Bool, trailing: () -> Content)
-PanelSectionHeader(title: String, trailing: (() -> Content)?)
-```
-
-`HistoryRow` needs the trailing `@ViewBuilder` because the rows differ only there:
-the clipboard puts a `TimelineView(.everyMinute)` age, the terminal puts `"%d×"`.
+**Verified by pixel diff rather than by eye**, because the failure mode is a 1 pt
+spacing drift that nothing else catches: terminal and shelf came out byte-identical
+(0 of 665,600 pixels), and the clipboard differed only in the header band — where
+the trailing inset is now consistently 6 pt, having been 0 on that panel and 6 on
+the others — plus one age label that ticked `16h → 17h` between captures.
