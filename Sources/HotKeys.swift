@@ -1,37 +1,107 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// Global shortcuts for switching panels while the island is open.
+/// The global shortcut that opens the keyboard history selection. Presets rather
+/// than a key recorder: each is picked from the menu bar, and each takes over one
+/// shortcut in other apps, which the menu cannot hide from whoever picks it.
+enum ClipboardShortcut: String, CaseIterable {
+    case shiftCommandV
+    case optionCommandV
+    case controlCommandV
+
+    var title: String {
+        switch self {
+        case .shiftCommandV: "⇧⌘V"
+        case .optionCommandV: "⌥⌘V"
+        case .controlCommandV: "⌃⌘V"
+        }
+    }
+
+    /// `⇧⌘V` is Paste and Match Style in Chrome, Slack, Docs and Notion, and this
+    /// shortcut is registered for the whole process, not just while the island is
+    /// open. `⌥⌘V` is Finder's Move Item Here. All three steal something; ⌃⌘V is
+    /// the one nothing common uses.
+    static let `default`: ClipboardShortcut = .controlCommandV
+
+    fileprivate var modifiers: UInt32 {
+        switch self {
+        case .shiftCommandV: UInt32(cmdKey | shiftKey)
+        case .optionCommandV: UInt32(cmdKey | optionKey)
+        case .controlCommandV: UInt32(cmdKey | controlKey)
+        }
+    }
+}
+
+/// Global shortcuts.
 ///
 /// Carbon's `RegisterEventHotKey` is used rather than `NSEvent` global monitors
 /// because a global key monitor needs Accessibility permission, and rather than
-/// menu key equivalents because the panel never becomes the active app.
+/// menu key equivalents because the panel never becomes the active app — which is
+/// also what lets a picked row paste into the app that still has focus.
 ///
-/// Panel shortcuts are only registered while the island is expanded, so they cannot
-/// shadow anything system-wide when it is closed. The single exception is the
-/// open/close key, which has to listen while the island is shut — that is why it
-/// carries a second modifier.
+/// Three groups, each registered only while it can mean something:
+///
+/// - **always** — `⌃⌥↓` and the clipboard shortcut. Both have to work while the
+///   island is shut, since a closed island is exactly when they are needed.
+/// - **panel** — `⌥1`–`⌥5`, `⌃⌥←/→` and the `⌥Tab` aliases, while the island is
+///   open. Their meaning narrows when the keyboard selection is active; see
+///   `PanelKey`.
+/// - **picker** — `↩`, `⌥↩` and `⎋`, while a history row is being driven from the
+///   keyboard. These are the only chords here with no modifier, which is why their
+///   lifetime is tied to that mode and nothing else.
 final class HotKeys {
-    /// Called on the main thread with the shortcut that fired.
-    var onPanel: ((Int) -> Void)?
-    var onCycle: ((Int) -> Void)?
+    /// What a panel-group chord means right now. The controller decides, because
+    /// only it knows whether a history row is selected.
+    enum PanelKey {
+        case select(Int)
+        /// `⌃⌥←/→`. Cycles panels normally, moves the selected row in keyboard mode.
+        case step(Int)
+    }
+
+    enum PickerKey {
+        case paste
+        case copy
+        case close
+    }
+
+    /// All called on the main thread.
+    var onPanelKey: ((PanelKey) -> Void)?
     /// Opens or closes the island. The only shortcut that lives for the whole
-    /// process, because an island that is closed still needs a way in.
+    /// process alongside the clipboard one, because an island that is closed still
+    /// needs a way in.
     var onToggle: (() -> Void)?
+    /// The clipboard shortcut: opens the island on the clipboard with a row
+    /// selected, or leaves that mode if it is already on.
+    var onClipboard: (() -> Void)?
+    var onPickerKey: ((PickerKey) -> Void)?
 
     private var handler: EventHandlerRef?
-    private var registered: [EventHotKeyRef] = []
+    private var panelRefs: [EventHotKeyRef] = []
+    private var pickerRefs: [EventHotKeyRef] = []
     private var toggleRef: EventHotKeyRef?
+    private var shortcutRef: EventHotKeyRef?
     private var isInstalled = false
 
+    /// One raw-value namespace shared by every group, so a hotkey ID identifies
+    /// exactly one chord. Numbered in one pass, contiguously: the two branches this
+    /// file was merged from inserted at different offsets, and overlapping numbers
+    /// would make `dispatch` ambiguous.
     private enum Slot: UInt32 {
+        case toggle = 0
         case panel1 = 1
         case panel2 = 2
         case panel3 = 3
         case panel4 = 4
-        case previous = 5
-        case next = 6
-        case toggle = 7
+        case panel5 = 5
+        case previous = 6
+        case next = 7
+        case tabForward = 8
+        case tabBackward = 9
+        case clipboard = 10
+        case paste = 11
+        case pasteKeypad = 12
+        case copy = 13
+        case close = 14
     }
 
     private struct Key {
@@ -40,15 +110,18 @@ final class HotKeys {
         let modifiers: UInt32
     }
 
-    /// ⌥1–4 jump straight to a panel; ⌃⌥←/→ cycle; ⌃⌥↓ opens the island.
+    /// `⌥1`–`⌥5` jump straight to a panel, in `PanelID.allCases` order; `⌃⌥←/→`
+    /// cycle; `⌃⌥↓` opens the island.
     ///
-    /// ⌘1–4 is the obvious choice and the wrong one: macOS and most apps claim
-    /// ⌘-number and ⌃-number first (tab switching, Spaces), and those win before a
-    /// Carbon hotkey is consulted, so the shortcut would silently never arrive.
-    /// ⌥-number is claimed by nothing, which is why plain ⌥ is what these use.
+    /// `⌘1`–`⌘5` is the obvious choice and the wrong one: macOS and most apps claim
+    /// `⌘`-number and `⌃`-number first (tab switching, Spaces), and those win before
+    /// a Carbon hotkey is consulted, so the shortcut would silently never arrive.
+    /// `⌥`-number is claimed by nothing, which is why plain `⌥` is what these use.
+    /// The same mistake in reverse — `⌥⌘1`–`⌥⌘5` — was tried and withdrawn for the
+    /// same reason.
     ///
-    /// Cycling sits on ⌃⌥ arrows so it shares the open key's modifier and the hand
-    /// is already on the arrow cluster. ⌥← / ⌥→ is word-wise text navigation and
+    /// Cycling sits on `⌃⌥` arrows so it shares the open key's modifier and the hand
+    /// is already on the arrow cluster. `⌥← / ⌥→` is word-wise text navigation and
     /// would be a bad trade even while the island is open.
     ///
     /// `⌥Tab` / `⌥⇧Tab` are the one chord here whose cost had to be weighed rather
@@ -64,16 +137,17 @@ final class HotKeys {
         Key(slot: .panel2, keyCode: UInt32(kVK_ANSI_2), modifiers: UInt32(optionKey)),
         Key(slot: .panel3, keyCode: UInt32(kVK_ANSI_3), modifiers: UInt32(optionKey)),
         Key(slot: .panel4, keyCode: UInt32(kVK_ANSI_4), modifiers: UInt32(optionKey)),
+        Key(slot: .panel5, keyCode: UInt32(kVK_ANSI_5), modifiers: UInt32(optionKey)),
         Key(slot: .previous, keyCode: UInt32(kVK_LeftArrow), modifiers: UInt32(controlKey | optionKey)),
         Key(slot: .next, keyCode: UInt32(kVK_RightArrow), modifiers: UInt32(controlKey | optionKey)),
-        Key(slot: .previous, keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey | shiftKey)),
-        Key(slot: .next, keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey))
+        Key(slot: .tabForward, keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey | shiftKey)),
+        Key(slot: .tabBackward, keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey))
     ]
 
-    /// ⌃⌥↓ toggles the island.
+    /// `⌃⌥↓` toggles the island.
     ///
     /// This one is registered at launch and never unregistered, so it cannot be a
-    /// bare ⌥↓: that is next-paragraph in every text editor, and stealing it
+    /// bare `⌥↓`: that is next-paragraph in every text editor, and stealing it
     /// permanently would be a much worse trade than the panel keys, which only
     /// exist while the island is already open.
     private static let toggleKey = Key(
@@ -82,6 +156,21 @@ final class HotKeys {
         modifiers: UInt32(controlKey | optionKey)
     )
 
+    /// Row actions, while the keyboard selection is active.
+    ///
+    /// Bare `↩` and `⎋` are the widest interception in the app: they stop reaching
+    /// the frontmost app. That is affordable only because the mode is entered
+    /// deliberately by a chord and ends on the first thing that means "done" —
+    /// paste, copy, escape, panel change, outside click or app switch. The bare
+    /// arrows the earlier design also took are **not** here: row movement shares
+    /// `⌃⌥←/→` with cycling, so it costs no registration at all.
+    private static let pickerKeys: [Key] = [
+        Key(slot: .paste, keyCode: UInt32(kVK_Return), modifiers: 0),
+        Key(slot: .pasteKeypad, keyCode: UInt32(kVK_ANSI_KeypadEnter), modifiers: 0),
+        Key(slot: .copy, keyCode: UInt32(kVK_Return), modifiers: UInt32(optionKey)),
+        Key(slot: .close, keyCode: UInt32(kVK_Escape), modifiers: 0)
+    ]
+
     // MARK: - Lifecycle
 
     func install() {
@@ -89,7 +178,7 @@ final class HotKeys {
         isInstalled = true
         installEventHandler()
         for key in Self.keys {
-            if let ref = register(key) { registered.append(ref) }
+            if let ref = register(key) { panelRefs.append(ref) }
         }
     }
 
@@ -105,11 +194,49 @@ final class HotKeys {
     }
 
     func uninstall() {
-        registered.forEach { UnregisterEventHotKey($0) }
-        registered.removeAll()
+        panelRefs.forEach { UnregisterEventHotKey($0) }
+        panelRefs.removeAll()
         isInstalled = false
-        // The Carbon event handler and the toggle hotkey stay installed: collapsing
-        // the island must not also disarm the key that can reopen it.
+        // The Carbon event handler, the toggle hotkey and the clipboard shortcut
+        // stay installed: collapsing the island must not also disarm the keys that
+        // can reopen it.
+    }
+
+    /// Row movement and dismissal, while a history row is selected.
+    ///
+    /// Registered in pairs with `uninstallPickerKeys()` and nowhere else: every path
+    /// out of the mode has to come through here, or bare `↩` stays stolen from every
+    /// app.
+    func installPickerKeys() {
+        guard pickerRefs.isEmpty else { return }
+        pickerRefs = Self.pickerKeys.compactMap(register)
+    }
+
+    func uninstallPickerKeys() {
+        pickerRefs.forEach { UnregisterEventHotKey($0) }
+        pickerRefs.removeAll()
+    }
+
+    /// Replaces the clipboard shortcut; nil switches it off.
+    ///
+    /// The result says only whether Carbon returned an error. It is **not** a
+    /// statement that the chord is free: `RegisterEventHotKey` returns `noErr` for a
+    /// chord another process already holds, and for chords the system itself owns —
+    /// measured, see `PLAN.md` §2. Nothing is reported to the user on the strength
+    /// of this value.
+    @discardableResult
+    func setClipboardShortcut(_ shortcut: ClipboardShortcut?) -> Bool {
+        if let shortcutRef {
+            UnregisterEventHotKey(shortcutRef)
+            self.shortcutRef = nil
+        }
+        guard let shortcut else { return true }
+        shortcutRef = register(Key(
+            slot: .clipboard,
+            keyCode: UInt32(kVK_ANSI_V),
+            modifiers: shortcut.modifiers
+        ))
+        return shortcutRef != nil
     }
 
     // MARK: - Internals
@@ -153,7 +280,7 @@ final class HotKeys {
             &ref
         )
         guard status == noErr, let ref else {
-            NSLog("DevIsland: hotkey \(key.slot.rawValue) registration failed (\(status))")
+            NSLog("DevIsland: hotkey \(key.slot) registration failed (\(status))")
             return nil
         }
         return ref
@@ -162,14 +289,25 @@ final class HotKeys {
     private func dispatch(_ slot: Slot?) {
         guard let slot else { return }
         switch slot {
-        case .panel1, .panel2, .panel3, .panel4:
-            onPanel?(Int(slot.rawValue) - 1)
-        case .previous:
-            onCycle?(-1)
-        case .next:
-            onCycle?(1)
+        case .panel1, .panel2, .panel3, .panel4, .panel5:
+            // Slot numbers start at 1, so `panel1` is index 0 into
+            // `PanelID.allCases`. Settings is the fifth case, which is what makes
+            // ⌥5 reach it.
+            onPanelKey?(.select(Int(slot.rawValue) - 1))
+        case .previous, .tabForward:
+            onPanelKey?(.step(-1))
+        case .next, .tabBackward:
+            onPanelKey?(.step(1))
         case .toggle:
             onToggle?()
+        case .clipboard:
+            onClipboard?()
+        case .paste, .pasteKeypad:
+            onPickerKey?(.paste)
+        case .copy:
+            onPickerKey?(.copy)
+        case .close:
+            onPickerKey?(.close)
         }
     }
 }

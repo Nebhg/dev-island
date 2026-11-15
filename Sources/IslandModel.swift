@@ -12,16 +12,63 @@ final class IslandModel: ObservableObject {
     @Published var nowPlaying: NowPlaying?
     @Published var notchSize = CGSize(width: 185, height: 32)
 
-    /// Which panel the island is showing. Resets to `defaultPanel` each time it
-    /// opens, so the island always lands where it was configured to.
+    /// Which panel the island is showing. Each open selects `panelOnOpen`: this
+    /// same panel when `reopensLastPanel` is on, `defaultPanel` otherwise.
+    /// Persisted, so the last panel also survives a relaunch.
     @Published var activePanel = PanelID.music {
-        didSet { onGeometryChange?() }
+        didSet {
+            onGeometryChange?()
+            // Settings is a detour, never the panel to come back to.
+            guard activePanel != .settings else { return }
+            lastContentPanel = activePanel
+            // Previews build throwaway models; they must not overwrite the
+            // user's real last panel.
+            if !PreviewMode.active {
+                UserDefaults.standard.set(activePanel.rawValue, forKey: Self.lastPanelKey)
+            }
+        }
     }
 
-    /// The panel opened on hover. Persisted.
+    /// The last panel that was not Settings; what closing on Settings goes back to.
+    private var lastContentPanel = PanelID.clipboard
+
+    /// Hides the per-panel controls — the history windows and the Autopaste pill —
+    /// and the Frequent row, leaving each history panel as just its list. The
+    /// controls live in the Settings panel either way. Persisted; off by default.
+    @Published var cleanLayout: Bool {
+        didSet { UserDefaults.standard.set(cleanLayout, forKey: Self.cleanLayoutKey) }
+    }
+
+    private static let cleanLayoutKey = "cleanLayout"
+
+    /// Set when the island was opened from outside the hover path — the toggle key,
+    /// the clipboard shortcut or the status menu.
+    ///
+    /// While it is set, "the pointer is not over the island" must not close it. Hover
+    /// is what normally drives expansion, so without this the first mouse event
+    /// anywhere else reads as "left the island" and collapses it about 30 ms after it
+    /// opened, which made the menu items look like they did nothing at all.
+    ///
+    /// Lives here rather than on the controller because the collapse timer reads it,
+    /// and that guard is the single authority on whether a collapse may happen — see
+    /// `IslandController.scheduleCollapse`. `keyboardSelection` is the second reason
+    /// not to collapse; they are separate concepts that share one guard.
+    var pinnedOpen = false
+
+    /// The panel opened on hover when `reopensLastPanel` is off. Persisted.
     @Published var defaultPanel: PanelID {
         didSet { UserDefaults.standard.set(defaultPanel.rawValue, forKey: Self.defaultPanelKey) }
     }
+
+    /// Reopen on whichever panel was showing when the island closed, instead of
+    /// always landing on `defaultPanel`. Persisted; on unless a fixed default
+    /// panel is picked from the menu bar.
+    @Published var reopensLastPanel: Bool {
+        didSet { UserDefaults.standard.set(reopensLastPanel, forKey: Self.reopensLastPanelKey) }
+    }
+
+    /// What `expand()` is about to show.
+    var panelOnOpen: PanelID { reopensLastPanel ? activePanel : defaultPanel }
 
     /// Set by a provider when its panel is degraded — e.g. terminal history
     /// needing `setopt INC_APPEND_HISTORY`. Rendered as a strip above content.
@@ -75,6 +122,8 @@ final class IslandModel: ObservableObject {
     var onGeometryChange: (() -> Void)?
 
     private static let defaultPanelKey = "defaultPanel"
+    private static let lastPanelKey = "lastPanel"
+    private static let reopensLastPanelKey = "reopensLastPanel"
 
     /// Set by the screenshot/launch flag so the island does not close while
     /// the pointer is elsewhere.
@@ -97,9 +146,168 @@ final class IslandModel: ObservableObject {
     let terminal: TerminalService
     let shelf = ShelfStore()
 
-    /// Set by the shelf panel when a drop lands, so the controller can tell a
-    /// completed drop from a cancelled drag and put the previous panel back.
+    /// Set when a drop lands, so the controller can tell a completed drop from a
+    /// cancelled drag and put the previous panel back.
     var shelfDidReceiveDrop = false
+
+    /// True while a file the island would take is over it. Drawn by the shelf.
+    @Published var fileDropTargeted = false
+
+    /// Files let go of anywhere on the island. Synchronous, so the flag is set
+    /// before the controller's mouse-up check runs.
+    func receiveFiles(_ urls: [URL]) {
+        shelfDidReceiveDrop = true
+        selectPanel(.shelf)
+        _ = shelf.addFiles(urls)
+    }
+
+    // MARK: - Keyboard selection
+
+    /// The global shortcut that opens the keyboard selection; nil when switched off.
+    /// Persisted.
+    @Published var clipboardShortcut: ClipboardShortcut? {
+        didSet {
+            UserDefaults.standard.set(clipboardShortcut?.rawValue ?? Self.shortcutOff, forKey: Self.clipboardShortcutKey)
+        }
+    }
+
+    private static let clipboardShortcutKey = "clipboardShortcut"
+    private static let shortcutOff = "off"
+
+    /// A history row being driven from the keyboard. Like Windows' ⊞V: the island
+    /// stays open without the pointer, and the keys move down the list.
+    ///
+    /// The **id**, not the index. Both lists change underneath the selection — a new
+    /// copy arrives at row 0, zsh appends a command — and an index would silently
+    /// move the highlight onto a different row while the user was not looking. The
+    /// index is derived wherever one is actually needed.
+    struct ListSelection: Equatable {
+        var panel: PanelID
+        var id: String
+    }
+
+    /// Nil when the keyboard is not driving a row. A row id of `""` means the list
+    /// is empty, which no entry's id can be, so every lookup fails and Return does
+    /// nothing — the empty-list behaviour, with no separate flag for it.
+    @Published private(set) var listSelection: ListSelection?
+
+    var keyboardSelectionActive: Bool { listSelection != nil }
+
+    /// What to put back when the selection ends. The shortcut is a detour, not a
+    /// choice of panel, so it must not become the panel hover reopens on.
+    private var panelBeforeSelection: PanelID?
+
+    /// Whether `id` in `panel`'s list is the selected row.
+    func isSelected(_ panel: PanelID, id: String) -> Bool {
+        listSelection?.panel == panel && listSelection?.id == id
+    }
+
+    /// Starts the mode on the clipboard, with its first row selected.
+    ///
+    /// `restoring` is captured by the caller **before** expanding: `expand()` writes
+    /// `activePanel`, so a panel read afterwards would be the one the shortcut chose
+    /// rather than the one the user was looking at.
+    func beginKeyboardSelection(restoring panel: PanelID) {
+        if listSelection == nil { panelBeforeSelection = panel }
+        selectPanel(.clipboard)
+        listSelection = ListSelection(panel: .clipboard, id: rowID(of: .clipboard, at: 0))
+    }
+
+    /// Ends the mode. Every exit goes through here — paste, copy, escape, panel
+    /// change, outside click, app switch, collapse — which is what bounds the
+    /// lifetime of the picker's unmodified keys.
+    func endKeyboardSelection() {
+        guard listSelection != nil else { return }
+        listSelection = nil
+        let previous = panelBeforeSelection
+        panelBeforeSelection = nil
+        // Only while the clipboard is still showing: moving to another panel is a
+        // real choice and must not be undone.
+        if let previous, activePanel == .clipboard {
+            activePanel = previous
+        }
+    }
+
+    func moveSelection(by step: Int) {
+        guard let selection = listSelection else { return }
+        let count = rowCount(of: selection.panel)
+        guard count > 0 else { return }
+        // A vanished id — the row aged out of the window, or was removed — lands on
+        // the first row whichever way the user was going.
+        let base = selectedRowIndex ?? (step > 0 ? -1 : 0)
+        let next = min(max(base + step, 0), count - 1)
+        listSelection = ListSelection(panel: selection.panel, id: rowID(of: selection.panel, at: next))
+    }
+
+    /// Pastes the selected row; `copyOnly` is ⌥↩, for when the target app is not the
+    /// one that had focus.
+    ///
+    /// The teardown is explicit rather than left to `collapse()`. The keys are only
+    /// safe because their lifetime is bounded, and reaching
+    /// `endKeyboardSelection` three calls deep inside a function whose job is
+    /// pasting is not a guarantee — it is a coincidence that happens to hold today.
+    func pasteSelection(copyOnly: Bool) {
+        guard let selection = listSelection, let index = selectedRowIndex else { return }
+        switch selection.panel {
+        case .clipboard:
+            let entries = clipboard.visible
+            guard entries.indices.contains(index) else { return }
+            endKeyboardSelection()
+            pasteClipboard(entries[index], autoPaste: !copyOnly)
+        case .terminal:
+            let entries = terminal.visible
+            guard entries.indices.contains(index) else { return }
+            endKeyboardSelection()
+            pasteTerminal(entries[index], autoPaste: !copyOnly)
+        default:
+            // Not a list: nothing to paste, but the mode still has to end or the
+            // keys stay registered.
+            endKeyboardSelection()
+        }
+    }
+
+    /// Index of the selected row in its own list, derived rather than stored.
+    private var selectedRowIndex: Int? {
+        guard let selection = listSelection else { return nil }
+        switch selection.panel {
+        case .clipboard: return clipboard.visible.firstIndex { $0.id == selection.id }
+        case .terminal: return terminal.visible.firstIndex { $0.id == selection.id }
+        default: return nil
+        }
+    }
+
+    private func rowCount(of panel: PanelID) -> Int {
+        switch panel {
+        case .clipboard: return clipboard.visible.count
+        case .terminal: return terminal.visible.count
+        default: return 0
+        }
+    }
+
+    private func rowID(of panel: PanelID, at index: Int) -> String {
+        switch panel {
+        case .clipboard:
+            let rows = clipboard.visible
+            return rows.indices.contains(index) ? rows[index].id : ""
+        case .terminal:
+            let rows = terminal.visible
+            return rows.indices.contains(index) ? rows[index].id : ""
+        default:
+            return ""
+        }
+    }
+
+    /// Keeps the mode tied to a history list. Switching to anything else — a panel
+    /// with no rows, Settings, the shelf — ends it.
+    private func retargetSelection(to panel: PanelID) {
+        guard listSelection != nil else { return }
+        let first = rowID(of: panel, at: 0)
+        guard !first.isEmpty else {
+            endKeyboardSelection()
+            return
+        }
+        listSelection = ListSelection(panel: panel, id: first)
+    }
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -109,10 +317,25 @@ final class IslandModel: ObservableObject {
         // default rather than a choice, so migrate it instead of leaving existing
         // installs on a panel the user never picked.
         let chosen = stored.flatMap(PanelID.init(rawValue:))
-        let initial = (chosen == .music ? PanelID.clipboard : chosen) ?? .clipboard
+        let initial = (chosen == .music || chosen == .settings ? PanelID.clipboard : chosen) ?? .clipboard
         self.defaultPanel = initial
-        self.activePanel = initial
+        let reopens = UserDefaults.standard.object(forKey: Self.reopensLastPanelKey) as? Bool ?? true
+        self.reopensLastPanel = reopens
+        // Unlike the default, a stored "music" here is a real choice: it is
+        // whatever was showing last.
+        let last = UserDefaults.standard.string(forKey: Self.lastPanelKey)
+            .flatMap(PanelID.init(rawValue:))
+            .flatMap { $0 == .settings ? nil : $0 }
+        let opening = reopens ? (last ?? initial) : initial
+        self.activePanel = opening
+        self.lastContentPanel = opening
+        self.cleanLayout = UserDefaults.standard.bool(forKey: Self.cleanLayoutKey)
         self.autoPasteEnabled = UserDefaults.standard.object(forKey: Self.autoPasteKey) as? Bool ?? true
+        switch UserDefaults.standard.string(forKey: Self.clipboardShortcutKey) {
+        case nil: self.clipboardShortcut = .default
+        case Self.shortcutOff: self.clipboardShortcut = nil
+        case let stored?: self.clipboardShortcut = ClipboardShortcut(rawValue: stored) ?? .default
+        }
         self.terminal = TerminalService(rules: ignoreRules)
 
         player.$nowPlaying
@@ -146,28 +369,44 @@ final class IslandModel: ObservableObject {
     /// Expanded: a black panel flush with the top edge, NotchNook style.
     var islandSize: CGSize {
         if expanded {
-            // The shelf is the one panel whose height follows its contents.
-            if activePanel == .shelf {
+            switch activePanel {
+            case .shelf:
+                // The one panel whose height follows its contents.
                 return CGSize(
                     width: activePanel.preferredSize.width,
                     height: PanelID.shelfHeight(forItems: shelf.items.count, notchHeight: notchSize.height)
                 )
+            case .music:
+                // Grows with the notch, so a taller menu bar does not eat the
+                // padding under the artwork.
+                return CGSize(
+                    width: MusicLayout.panelWidth,
+                    height: MusicLayout.panelHeight(notchHeight: notchSize.height)
+                )
+            case .settings:
+                return CGSize(
+                    width: activePanel.preferredSize.width,
+                    height: PanelID.settingsHeight(notchHeight: notchSize.height)
+                )
+            case .clipboard, .terminal:
+                return activePanel.preferredSize
             }
-            return activePanel.preferredSize
         }
-        // BoringNotch's "chin": the closed notch is 2pt wider than the cutout and
-        // grows by 2*(height-12)+20 while music plays, showing artwork and a
-        // waveform.
+        // Idle, the closed notch is 2pt wider than the cutout. While music plays it
+        // grows a wing either side: each a square as tall as the band, so the
+        // artwork and the equaliser get the same padding on every side (see
+        // `WingContent`), plus the body's inset from the window.
         //
         // macOS draws its own now-playing live activity further along the menu bar,
         // so both are visible — accepted deliberately: ours sits at the notch, where
         // the island is, and the system's is somewhere else entirely. Ours used to
         // cost 3.8% of a core while it animated; the equaliser is Core Animation
         // now, which the window server interpolates, so it costs nothing.
-        let base = notchSize.width + 4
         let playing = nowPlaying?.isPlaying == true
-        let chin = playing ? (2 * max(0, notchSize.height - 12) + 20) : 0
-        return CGSize(width: base + chin, height: notchSize.height)
+        let width = playing
+            ? notchSize.width + 2 * notchSize.height + 2 * IslandMetrics.closedInset
+            : notchSize.width + 4
+        return CGSize(width: width, height: notchSize.height)
     }
 
     /// What the window has to be. Normally the island; while a toast is up the
@@ -187,19 +426,30 @@ final class IslandModel: ObservableObject {
     func selectPanel(_ panel: PanelID) {
         guard panel != activePanel else { return }
         activePanel = panel
+        // A panel reached from the keyboard follows the mode; one reached any other
+        // way is a real choice and the mode ends. `retargetSelection` is the no-op
+        // when no row is selected.
+        retargetSelection(to: panel)
     }
 
     // MARK: - Presentation
 
     func expand() {
         guard !expanded, !suppressed else { return }
-        activePanel = defaultPanel
+        activePanel = panelOnOpen
         expanded = true
     }
 
     func collapse() {
         guard expanded else { return }
         expanded = false
+        // One place, because `collapse()` is reached from every hiding path: the
+        // hover timer, the toggle key, a paste, Spotlight, a display change.
+        pinnedOpen = false
+        endKeyboardSelection()
+        if activePanel == .settings {
+            activePanel = lastContentPanel
+        }
     }
 
     /// Moves to the next or previous panel, wrapping at the ends.

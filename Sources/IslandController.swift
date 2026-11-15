@@ -11,6 +11,9 @@ final class IslandController {
     private let panel: IslandPanel
     private let model: IslandModel
     private let host: NSHostingView<IslandRootView>
+    /// The window's content view, with `host` inside it: the drop target for the
+    /// whole island.
+    private let dropView: FileDropView
     private let panelHost: PanelHost
 
     private var globalMonitor: Any?
@@ -48,16 +51,16 @@ final class IslandController {
     /// drag can put it back. Only meaningful while `dragOpenedShelf` is true.
     private var panelBeforeDrag: PanelID?
     private var dragOpenedShelf = false
-    private let hotKeys = HotKeys()
 
-    /// Set when the island was opened from outside the hover path — the toggle key or
-    /// the status menu.
-    ///
-    /// While it is set, "the pointer is not over the island" must not close it. Hover
-    /// is what normally drives expansion, so without this the first mouse event
-    /// anywhere else reads as "left the island" and collapses it about 30 ms after it
-    /// opened, which made the menu items look like they did nothing at all.
-    private var pinnedOpen = false
+    /// The last press landed on the open island — possibly a shelf row about to be
+    /// dragged out.
+    private var dragBeganOnIsland = false
+
+    /// A file was released over the open shelf and has not been accounted for yet:
+    /// either `FileDropView` takes the drop, or the safety net in
+    /// `restorePanelIfDragWasCancelled` reads it from the drag pasteboard.
+    private var awaitingReleasedFiles = false
+    private let hotKeys = HotKeys()
 
     /// `ISLAND_DRAG_PROBE=1` logs every dragged event with both gate signals, so
     /// risk 10 can be answered on a machine where this app holds the Accessibility
@@ -85,6 +88,7 @@ final class IslandController {
         self.model = model
         self.panelHost = PanelHost(model: model)
         self.host = NSHostingView(rootView: IslandRootView(model: model))
+        self.dropView = FileDropView(frame: NSRect(origin: .zero, size: model.islandSize))
         self.panel = IslandPanel(
             contentRect: NSRect(origin: .zero, size: model.islandSize),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -94,9 +98,10 @@ final class IslandController {
 
         host.translatesAutoresizingMaskIntoConstraints = true
         host.autoresizingMask = [.width, .height]
-        host.frame = NSRect(origin: .zero, size: model.islandSize)
+        host.frame = dropView.bounds
+        dropView.addSubview(host)
 
-        panel.contentView = host
+        panel.contentView = dropView
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -114,20 +119,42 @@ final class IslandController {
         // which is what keeps a synthetic ⌘V going to the app the user was in.
         panel.becomesKeyOnlyIfNeeded = true
 
-        // Panel shortcuts only live while the island is open. The toggle key is
-        // registered separately and stays armed for the life of the process, since
-        // a closed island is exactly when it is needed.
-        hotKeys.onPanel = { [weak self] index in
-            guard let self, index < PanelID.allCases.count else { return }
-            self.model.selectPanel(PanelID.allCases[index])
-        }
-        hotKeys.onCycle = { [weak self] step in
-            self?.model.cyclePanel(by: step)
+        // Panel shortcuts only live while the island is open. The toggle key and the
+        // clipboard shortcut are registered separately and stay armed for the life
+        // of the process, since a closed island is exactly when they are needed.
+        hotKeys.onPanelKey = { [weak self] key in
+            guard let self else { return }
+            switch key {
+            case .select(let index):
+                guard index < PanelID.allCases.count else { return }
+                // `allCases`, not `contentPanels`: Settings is the fifth case, and
+                // that is what makes ⌥5 reach it.
+                self.model.selectPanel(PanelID.allCases[index])
+            case .step(let step):
+                // One registration, two meanings. The chord is the same; only the
+                // mode decides whether it cycles panels or moves the selected row.
+                if self.model.keyboardSelectionActive {
+                    self.model.moveSelection(by: step)
+                } else {
+                    self.model.cyclePanel(by: step)
+                }
+            }
         }
         hotKeys.onToggle = { [weak self] in
             self?.toggleExpanded()
         }
+        hotKeys.onClipboard = { [weak self] in
+            self?.toggleKeyboardSelection()
+        }
+        hotKeys.onPickerKey = { [weak self] key in self?.handlePickerKey(key) }
         hotKeys.installToggle()
+
+        dropView.canAccept = { [weak model] in model?.expanded == true }
+        dropView.onTargetChange = { [weak model] targeted in
+            guard let model, model.fileDropTargeted != targeted else { return }
+            model.fileDropTargeted = targeted
+        }
+        dropView.onDrop = { [weak model] urls in model?.receiveFiles(urls) }
 
         updateGeometry()
         installMonitors()
@@ -140,6 +167,14 @@ final class IslandController {
             queue: .main
         ) { [weak self] note in
             guard let self else { return }
+            // Focus moving to another app ends the keyboard selection: its Return
+            // and Escape are global while the mode is on, and must not follow the
+            // user somewhere they did not expect them taken. This notification is
+            // also the ⌘Tab path — Spotlight, watched separately below, is the case
+            // that re-suppresses the island rather than closing it.
+            if self.model.keyboardSelectionActive {
+                self.model.collapse()
+            }
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             guard app?.bundleIdentifier == "com.apple.campo" else { return }
             self.hideForSpotlight()
@@ -199,9 +234,28 @@ final class IslandController {
             }
             .store(in: &cancellables)
 
-        // The chin appearing or disappearing changes the closed window's size as
-        // well as what it covers, so the frame and the click-through policy both
-        // have to follow it.
+        // The picker's keys are global while registered, so they follow the
+        // selection directly — no hop to the next run loop turn that could leave
+        // them live after the mode has gone.
+        model.$listSelection
+            .sink { [weak self] selection in
+                if selection == nil {
+                    self?.hotKeys.uninstallPickerKeys()
+                } else {
+                    self?.hotKeys.installPickerKeys()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Emits the stored value on subscribe, which is what registers the shortcut
+        // at launch. The result is only a Carbon error status; it says nothing about
+        // whether another app already holds the chord, so nothing is shown for it.
+        model.$clipboardShortcut
+            .sink { [weak self] shortcut in
+                self?.hotKeys.setClipboardShortcut(shortcut)
+            }
+            .store(in: &cancellables)
+
         // `@Published` does not replay, so an island opened by a launch flag never
         // produced the `$expanded` event and therefore never started polling. That
         // is exactly what a screenshot session wants to look like, and it made the
@@ -250,7 +304,6 @@ final class IslandController {
     /// ⌃⌥↓.
     func toggleExpanded() {
         if model.expanded {
-            pinnedOpen = false
             model.collapse()
         } else {
             expandWithoutPointer()
@@ -268,8 +321,13 @@ final class IslandController {
     ///   flag normally clears on the next pointer movement, so a pointer-driven open
     ///   never notices, but a menu or keypress open would hit `expand()`'s guard and
     ///   silently do nothing.
+    ///
+    /// Spotlight open is an early return rather than a fall-through: `expand()` is
+    /// blocked by `suppressed` while the panel itself has no such guard, so ordering
+    /// it forward would leave an invisible window in front of Spotlight.
     func expandWithoutPointer() {
-        if model.suppressed, !SpotlightState.isOpen {
+        guard !SpotlightState.isOpen else { return }
+        if model.suppressed {
             model.suppressed = false
             refreshMousePolicy()
         }
@@ -285,13 +343,62 @@ final class IslandController {
             refreshMousePolicy()
         }
         model.expand()
-        pinnedOpen = model.expanded
+        model.pinnedOpen = model.expanded
+        // Nothing asked for should be undone by a collapse that was already queued
+        // from an earlier pointer exit.
+        if model.expanded { collapseWork?.cancel() }
     }
 
     /// Exposed for the status item's "Default Panel" submenu.
     var defaultPanel: PanelID {
         get { model.defaultPanel }
         set { model.defaultPanel = newValue }
+    }
+
+    /// The submenu's "Last Used" entry.
+    var reopensLastPanel: Bool {
+        get { model.reopensLastPanel }
+        set { model.reopensLastPanel = newValue }
+    }
+
+    /// Exposed for the status item's "Clipboard Shortcut" submenu.
+    var clipboardShortcut: ClipboardShortcut? {
+        get { model.clipboardShortcut }
+        set { model.clipboardShortcut = newValue }
+    }
+
+    /// Exposed for the status item's "Clean Layout" item.
+    var cleanLayout: Bool {
+        get { model.cleanLayout }
+        set { model.cleanLayout = newValue }
+    }
+
+    // MARK: - Keyboard selection
+
+    /// The clipboard shortcut: opens the island on the clipboard with a row
+    /// selected, or ends that mode if it is already on.
+    private func toggleKeyboardSelection() {
+        if model.keyboardSelectionActive, model.expanded {
+            model.endKeyboardSelection()
+            return
+        }
+        // Captured before expanding, and by the same rule the drag path uses: an
+        // open island's `activePanel` is what the user is looking at, a closed one
+        // has not chosen yet, so it is what hover would have shown.
+        let restore = model.expanded ? model.activePanel : model.panelOnOpen
+        expandWithoutPointer()
+        // Spotlight open, or `expand()` refused: there is nothing to select from.
+        guard model.expanded else { return }
+        model.beginKeyboardSelection(restoring: restore)
+    }
+
+    private func handlePickerKey(_ key: HotKeys.PickerKey) {
+        switch key {
+        case .paste: model.pasteSelection(copyOnly: false)
+        case .copy: model.pasteSelection(copyOnly: true)
+        // `collapse()` ends the mode as well, so this unregisters the keys.
+        case .close: model.collapse()
+        }
     }
 
     /// Ends the media helper process. Called on normal termination; see
@@ -326,8 +433,9 @@ final class IslandController {
         panel.orderOut(nil)
     }
 
+    /// `model.collapse()` clears `pinnedOpen` and ends the keyboard selection, so
+    /// every hiding path goes through the same teardown.
     func collapse() {
-        pinnedOpen = false
         model.collapse()
     }
 
@@ -399,7 +507,8 @@ final class IslandController {
     private func applyWindowSize(_ size: CGSize, on screen: NSScreen) {
         if size != windowSize {
             windowSize = size
-            host.frame = NSRect(origin: .zero, size: size)
+            // The host follows through its autoresizing mask.
+            dropView.frame = NSRect(origin: .zero, size: size)
         }
 
         let frame = islandFrame(for: size, on: screen)
@@ -436,6 +545,26 @@ final class IslandController {
     /// pointer does not fall out of the island on the way down.
     private func inHotZone(_ point: CGPoint) -> Bool {
         islandRect.insetBy(dx: -8, dy: -4).contains(point)
+    }
+
+    /// How far a dragged file reaches. Hover needs the pointer on the notch; a
+    /// file on its way to the shelf opens it from this far out, and keeps it open
+    /// while it is anywhere near — so the drop target is already there when the
+    /// file arrives, instead of appearing only once it is inside the cutout.
+    private static let dragReach: CGFloat = 100
+
+    /// The shelf's footprint plus `dragReach` around it, hanging from the top
+    /// edge — or the island's, if it is already open and larger.
+    private var dragZone: CGRect {
+        guard let screen = targetScreen() else { return .zero }
+        let width = max(PanelID.shelf.preferredSize.width, islandRect.width) + 2 * Self.dragReach
+        let height = max(model.notchSize.height, islandRect.height) + Self.dragReach
+        return CGRect(
+            x: screen.frame.midX - width / 2,
+            y: screen.frame.maxY - height,
+            width: width,
+            height: height
+        )
     }
 
     /// Open, the panel owns every click inside it. Closed and idle, the window is
@@ -504,10 +633,22 @@ final class IslandController {
             // Snapshot before the drag begins: the payload is written to the drag
             // pasteboard after this point, so a changed count means content.
             dragCountAtMouseDown = NSPasteboard(name: .drag).changeCount
+            // A press on the open island may become a shelf row being dragged out,
+            // which must not be caught on the way back in.
+            dragBeganOnIsland = model.expanded && islandRect.contains(NSEvent.mouseLocation)
 
         case .leftMouseUp:
             dragCountAtMouseDown = -1
             model.isInteracting = false
+            // A file let go of over the open shelf. The drop normally reaches
+            // `FileDropView`; `restorePanelIfDragWasCancelled` checks whether it did.
+            awaitingReleasedFiles = dragOpenedShelf
+                && !dragBeganOnIsland
+                && model.expanded
+                && islandRect.contains(NSEvent.mouseLocation)
+            if Self.dragProbe, dragOpenedShelf {
+                NSLog("[probe] released overIsland=\(awaitingReleasedFiles) beganOnIsland=\(dragBeganOnIsland) expanded=\(model.expanded)")
+            }
             restorePanelIfDragWasCancelled()
 
         case .leftMouseDragged:
@@ -528,7 +669,8 @@ final class IslandController {
             //
             // Only queried after a drag was actually seen. Touching the pasteboard
             // on every mouse move would be an IPC round trip at pointer rate.
-            if dragPasteboardDirty {
+            // Not while a released file is still to be read from it.
+            if dragPasteboardDirty, !awaitingReleasedFiles {
                 NSPasteboard(name: .drag).clearContents()
                 dragPasteboardDirty = false
             }
@@ -540,6 +682,12 @@ final class IslandController {
 
         let point = NSEvent.mouseLocation
         var inside = inHotZone(point)
+
+        // A dragged event only gets this far carrying a file — the switch above
+        // returned for the rest — and a file counts from further out.
+        if event.type == .leftMouseDragged, dragZone.contains(point) {
+            inside = true
+        }
 
         // A recent shrink may have lifted the island's bottom edge above the
         // pointer. Keep counting the old area as inside until the pointer leaves
@@ -562,10 +710,13 @@ final class IslandController {
             if !dragOpenedShelf {
                 dragOpenedShelf = true
                 // Remember what the user would have been looking at. If the island
-                // is closed, that is the default panel, because `expand()` is about
-                // to select it.
-                panelBeforeDrag = model.expanded ? model.activePanel : model.defaultPanel
+                // is closed, that is `panelOnOpen`, because `expand()` is about to
+                // select it.
+                panelBeforeDrag = model.expanded ? model.activePanel : model.panelOnOpen
                 model.shelfDidReceiveDrop = false
+                if Self.dragProbe {
+                    NSLog("[probe] file drag reached the island zone; expanded=\(model.expanded) beganOnIsland=\(dragBeganOnIsland)")
+                }
             }
         }
 
@@ -576,9 +727,9 @@ final class IslandController {
         // Deliberately returns before the Spotlight re-arm below: while the island is
         // pinned nobody asked for it to track the pointer, and the `suppressed` flag
         // is meaningless until `expandWithoutPointer` has been through it.
-        if pinnedOpen {
+        if model.pinnedOpen {
             if inside || event.type == .leftMouseDown {
-                pinnedOpen = false
+                model.pinnedOpen = false
             } else {
                 wasInside = false
                 return
@@ -611,7 +762,7 @@ final class IslandController {
             }
             model.expand()
 
-            // Must come after expand(): expand() resets activePanel to defaultPanel,
+            // Must come after expand(): expand() sets activePanel to panelOnOpen,
             // which silently undid selecting the shelf during a drag — so the shelf
             // was never on screen to receive the drop.
             if dragOpenedShelf {
@@ -630,10 +781,31 @@ final class IslandController {
     /// the user never asked for it. The delay lets the drop handler run first: item
     /// loading is asynchronous, so the flag is not set the instant the button comes
     /// up.
+    ///
+    /// It is also the safety net for a file released over the open shelf whose drop
+    /// never reached `FileDropView`. The hover monitor sees every drag, and the
+    /// drag pasteboard still holds the files after the button comes up, so they are
+    /// read from there — the shelf only records a reference, so there is no file
+    /// operation the drop would have had to perform. Read here, after the source
+    /// has finished, rather than on mouse-up while it may still be busy with the
+    /// drop; `awaitingReleasedFiles` keeps the stale-pasteboard clear off it until
+    /// then.
     private func restorePanelIfDragWasCancelled() {
         guard dragOpenedShelf else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self else { return }
+            if self.awaitingReleasedFiles {
+                self.awaitingReleasedFiles = false
+                if self.model.shelfDidReceiveDrop {
+                    if Self.dragProbe { NSLog("[probe] drop arrived through FileDropView; safety net not needed") }
+                } else {
+                    let urls = FileDropView.fileURLs(on: NSPasteboard(name: .drag))
+                    if Self.dragProbe { NSLog("[probe] no drop arrived; safety net read \(urls.count) file(s) from the drag pasteboard") }
+                    if !urls.isEmpty {
+                        self.model.receiveFiles(urls)
+                    }
+                }
+            }
             let dropped = self.model.shelfDidReceiveDrop
             let previous = self.panelBeforeDrag
             self.dragOpenedShelf = false
@@ -655,7 +827,8 @@ final class IslandController {
             model.player.startPolling()
             hotKeys.install()
         } else {
-            pinnedOpen = false
+            // `model.collapse()` has already cleared `pinnedOpen` and the keyboard
+            // selection; this is only the things that follow the window.
             stopSpotlightWatch()
             model.player.stopPolling()
             hotKeys.uninstall()
@@ -667,9 +840,18 @@ final class IslandController {
     private func scheduleCollapse() {
         collapseWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
+            // The single authority on whether a collapse may happen. `pinnedOpen` and
+            // the keyboard selection are separate reasons with one guard: a pinned
+            // island was not asked to close by the pointer, and a selected row is
+            // driven from the keyboard, where the pointer being elsewhere is the
+            // normal case. Gating only one of them — as the two branches this was
+            // merged from each did — leaves the other relying on the call order in
+            // `handleMouse`.
             guard let self,
                   !self.model.locksOpen,
                   !self.model.isInteracting,
+                  !self.model.pinnedOpen,
+                  !self.model.keyboardSelectionActive,
                   !self.inHotZone(NSEvent.mouseLocation)
             else { return }
             self.model.collapse()

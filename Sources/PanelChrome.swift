@@ -27,8 +27,8 @@ struct PanelSectionHeader<Trailing: View>: View {
             Spacer(minLength: 0)
             trailing
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 6)
+        .padding(.leading, IslandMetrics.textInset)
+        .padding(.trailing, IslandMetrics.headerTrailingInset)
         .frame(height: 14)
     }
 }
@@ -84,13 +84,13 @@ struct FrequentChip: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 7)
+            .padding(.horizontal, IslandMetrics.textInset)
             .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: IslandMetrics.rowRadius, style: .continuous)
                     .fill(.white.opacity(0.055))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        RoundedRectangle(cornerRadius: IslandMetrics.rowRadius, style: .continuous)
                             .strokeBorder(.white.opacity(0.07), lineWidth: 0.5)
                     )
             )
@@ -111,6 +111,9 @@ struct HistoryRow<Trailing: View>: View {
     let text: String
     var monospaced = false
     let help: String
+    /// The keyboard picker's current row. Drawn a step brighter than hover, so the
+    /// two can be told apart when the pointer happens to rest on another row.
+    var selected = false
     let action: () -> Void
     @ViewBuilder var trailing: Trailing
 
@@ -120,7 +123,7 @@ struct HistoryRow<Trailing: View>: View {
         HStack(spacing: 8) {
             Image(systemName: symbol)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(hovering ? 0.55 : 0.3))
+                .foregroundStyle(.white.opacity(selected || hovering ? 0.55 : 0.3))
                 .frame(width: 13)
 
             Text(text)
@@ -135,12 +138,11 @@ struct HistoryRow<Trailing: View>: View {
             trailing
                 .layoutPriority(1)
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 14)
+        .padding(.horizontal, IslandMetrics.textInset)
         .frame(height: 26)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(.white.opacity(hovering ? 0.06 : 0))
+            RoundedRectangle(cornerRadius: IslandMetrics.rowRadius, style: .continuous)
+                .fill(.white.opacity(selected ? 0.11 : hovering ? 0.06 : 0))
         )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
