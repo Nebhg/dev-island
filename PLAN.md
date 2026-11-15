@@ -1,6 +1,6 @@
 # Dev Island — multi-panel plan
 
-Status: **Phases 0–5 implemented; Phase 6 proposed.** Phase 0 is *partial* — the
+Status: **Phases 0–5.5 implemented; Phase 6 proposed.** Phase 0 is *partial* — the
 YouTube/Chrome test and the paste-notice check were never run. §1 states facts
 verified against the source; rows marked *(Phase 1/2/3/4)* describe the code as it
 now stands, not the original commit. §11 records the signing setup that is in
@@ -15,6 +15,7 @@ place.
 | 3 — terminal history panel | done |
 | 4 — file shelf | **done, verified by use** |
 | 5 — music visual upgrade | done |
+| 5.5 — strip removed, per-panel sizes, resize rework | done |
 | 6 — browser-media fallback | only if Phase 0 demands it |
 
 Goal: turn a single-purpose music notch into a panel host with a clipboard
@@ -37,7 +38,7 @@ These matter because they invalidate some obvious approaches.
 | Hover monitors cover `.mouseMoved`, `.leftMouseDown`, `.leftMouseDragged`, `.leftMouseUp` **(Phase 4)** | `Sources/IslandController.swift` (`installMonitors`, `isCarryingContent`) | A held mouse button posts `.leftMouseDragged`, not `.mouseMoved`, so drag-in needs its own event type or the island never expands. The gate is the drag pasteboard's **types**, not its `changeCount`: measured, the count does not move when a drag starts. The pasteboard is cleared on `.mouseMoved` because AppKit leaves the previous drag's types behind. See §5. |
 | Polls only run while expanded **(Phase 1)** | `Sources/IslandController.swift:105-119`, `Sources/IslandModel.swift:137-149` | Both the Spotlight watch and `PlayerService.startPolling()` / `stopPolling()` are driven off `$expanded`. Verified: zero `osascript` spawns while closed. This is the precedent the `PanelProvider` lifecycle follows. |
 | Panel level `.mainMenu + 3`, SkyLight space attach | `Sources/FullscreenSupport.swift` | New panels inherit this; no extra work. |
-| Window frame tracks the island **(Phase 2/5)** | `Sources/IslandController.swift` (`updateGeometry`, `syncWindow`), `:29` (`pointerCapture`) | The window is resized every animation frame from an `Animatable` size probe, so it never exceeds the shape. Three things are load-bearing: the no-op guard (setting the frame re-lays out the hosting view, which re-runs the probe, which calls straight back — unguarded, it redraws at display rate forever), critically-damped springs (any overshoot moves the whole window, not just the shape), and **main-thread confinement** — SwiftUI's async display link invokes the probe off the main thread, where `NSWindow.setFrame` traps with `EXC_BREAKPOINT`, so frames are coalesced and applied on the main queue. `pointerCapture` separately stops a shrink from collapsing the island out from under a stationary pointer — see §2. |
+| Window frame tracks the island **(Phase 2/5)** | `Sources/IslandController.swift` (`updateGeometry`, `scheduleSettle`, `applyWindowSize`, `onGeometryChange`), `IslandView.swift` (`IslandRootView`) | The window is resized **twice per transition** — up to `max(old, new)` before the shape moves, and back to the target after it settles — and never in between. Three things are load-bearing: the window must never be smaller than the shape (that is the whole fix for risk 7), the content must be laid out at the target size rather than the animating one (otherwise every frame reflows text, which was the jank), and `onGeometryChange` must fire **synchronously** from the model setters, before SwiftUI's first frame. `pointerCapture` separately stops a shrink from collapsing the island out from under a stationary pointer — see §2. |
 | Click-to-Spotlight (`openSpotlight()`) | `Sources/IslandView.swift` / `IslandModel.swift` | Removed in Phase 1 (`⌘Space` is the precedent); Spotlight avoidance / suppression while `SpotlightState.isOpen` is retained. |
 | 30 ms collapse on pointer exit, with an existing `isInteracting` escape hatch | `Sources/IslandController.swift:390-402` (`scheduleCollapse`), `:40` (`isInteracting`) | Collapse is deferred 30 ms and then re-checks three conditions: `!model.locksOpen`, `!isInteracting`, `!inHotZone(mouseLocation)`. Right-click `NSMenu`s, drag-ins and drag-outs all move the pointer outside `islandRect`, so `isInteracting` is the intended guard — it is **declared and already checked**, but nothing sets it yet. Phase 4 wires it up rather than adding a new flag. |
 | `IslandPanel` overrides `canBecomeKey = true` **(Phase 2)** | `Sources/IslandController.swift:5-8` | `becomesKeyOnlyIfNeeded` is now `true`, so a click cannot take key status and swallow the synthetic `⌘V`. Auto-paste verified working by clicking a row and pasting into an editor. |
@@ -73,24 +74,70 @@ timer and the app idles at 5–10% CPU.
 
 ### Panel sizes
 
-SwiftUI animates `NotchShape` inside a non-animated `NSPanel`. The window follows the shape **frame by frame** rather than being snapped to the target: an `Animatable` size probe reports each interpolated size and the controller resizes the window to match, so the window is never larger than the island. Both springs are critically damped (`dampingFraction: 1`), because any overshoot moves the whole window rather than being clipped inside it. See risk 7 for the outstanding see-through report.
+SwiftUI animates `NotchShape` inside a fixed-size `NSPanel`. **The window is
+resized at the endpoints of a transition, never during it** — this is the
+BoringNotch trick, and it is why their animation is smoother than a window that
+is resized every frame.
 
-**`pointerCapture` covers the one case frame-tracking alone cannot.** Switching to a shorter panel lifts the island's bottom edge above a stationary pointer, which makes `inHotZone` false and collapses the island out from under the cursor. So `model.$activePanel` snapshots the old `panel.frame` into `pointerCapture` when the pointer is inside it (line 143-146), and `handleMouse` treats that rect as inside until the pointer actually leaves it (line 348-354). It is cleared on expand and when the pointer exits the captured rect. This applies whenever a switch makes the island **shorter**; it costs nothing when it grows.
+```
+panel switch:  window jumps to max(old, new)  →  shape springs inside it
+                                                       ↓ 0.6 s
+                                          window settles to the new size
+```
+
+Two consequences, both load-bearing:
+
+- **The window is never smaller than the shape.** It can only be *larger*, which
+  shows as transparent margin around an already-drawn island — not as the desktop
+  through it. Risk 7 is therefore impossible by construction, not merely rare.
+- **The content never reflows mid-animation.** `IslandRootView` lays the panel out
+  once at the *target* size and animates only the frame around it, so a switch
+  costs one reflow instead of one per frame. That per-frame reflow — text
+  re-wrapping, the marquee re-measuring with `NSString.size(withAttributes:)` —
+  was the actual jank, and it also used to drive `NSWindow.setFrame` from
+  SwiftUI's async display-link thread, which traps.
+
+The settle is the only reason the window is ever larger than the island, and it
+exists so the island does not inherit BoringNotch's permanent dead zone: their
+window is permanently `640 × 210`, which swallows every click in the menu-bar
+space beside a smaller panel. During the settle of a *collapse* the window is
+still panel-sized over live menu bar, so `ignoresMouseEvents` is forced on until
+it has shrunk.
+
+Both springs stay critically damped (`dampingFraction: 1`). BoringNotch uses 0.8
+because it has 20 pt of shadow padding for the overshoot to live in; here an
+overshoot would push the shape past the window and clip it.
+
+`onGeometryChange` is called **synchronously** from the model's `expanded` /
+`activePanel` setters rather than from a Combine sink, because the window has to
+be grown before SwiftUI renders the first frame of the animation.
+
+**`pointerCapture` covers the case the window cannot.** Switching to a shorter
+panel lifts the island's bottom edge above a stationary pointer, which makes
+`inHotZone` false and collapses the island out from under the cursor. So
+`model.$activePanel` snapshots the old `panel.frame` into `pointerCapture` when
+the pointer is inside it, and `handleMouse` treats that rect as inside until the
+pointer actually leaves it. It is cleared on expand and when the pointer exits
+the captured rect.
 
 The `32 pt` physical notch, the panel bar in that band, and padding consume
-`~40 pt` of vertical chrome. **Every panel is the same size**:
+`~40 pt` of vertical chrome. Sizes differ by panel:
 
-| Panel | Size (pt) |
-| --- | --- |
-| Clipboard | 440 × 310 |
-| Terminal | 440 × 310 |
-| Shelf | 440 × 310 |
-| Music | 440 × 310 |
+| Panel | Size (pt) | Why |
+| --- | --- | --- |
+| Clipboard | 520 × 320 | wide rows: text, source and age on one line; FREQUENT chips stop wrapping |
+| Terminal | 520 × 320 | long commands stop truncating |
+| Shelf | 440 × 102–260 | **height follows the file count**; 102 with one file, capped at 260 before it scrolls |
+| Music | 440 × 190 | 132 pt artwork + scrub + times + transport ≈ 150 pt of content |
 
-A single size is what removes risk 7 rather than mitigating it: switching panels
-cannot resize the window, so there is no frame during which the window and the
-shape disagree and the desktop shows through. It also means the icons, the strip
-and the panel body never move when switching.
+Clipboard and terminal are deliberately identical, so switching between the two
+most-used panels moves nothing at all.
+
+The shelf is the one panel that is not a fixed size — see §5. Its height is
+`notchHeight + 38 + 31·items + 1`, capped at 260. A fixed 260 reserved room for six
+rows even when one file was dropped, which left a mostly empty card hanging under
+the notch. Adding or removing a file resizes the window the same way a panel
+switch does, so `IslandController` watches `shelf.$items` too.
 
 ### Navigation
 
@@ -104,6 +151,11 @@ icons left of the notch, two right, in this order:
 
 Active at full white, inactive at 0.3. This replaced a bottom nav row, which cost
 ~22 pt of content height on every panel and put the switcher where the eye is not.
+
+The icons are **anchored to the cutout**, not centred in the side band. Panels
+differ in width, so centring would slide all four icons sideways on every switch.
+The band is measured from `activePanel.preferredSize`, not from the window, so the
+icons stay put even while the window is still the larger of the two sizes.
 
 Deliberately **no scroll-to-switch**: a clipboard list needs wheel scrolling,
 and a global scroll handler fights it.
@@ -120,33 +172,18 @@ on a panel nobody picked.
 
 ### Music while another panel is open
 
-**28 pt now-playing strip pinned at the top of every non-music panel**: 20 pt
-artwork, marquee title, play/pause button.
+**No strip. Music is only visible in the closed notch.** A 28 pt now-playing
+strip was built on every non-music panel and then removed: it was chrome that
+stayed on screen, it duplicated what the closed notch already shows, and it cost
+~34 pt at the top of every list.
 
-The strip is chrome, so it does not sit there forever: it is drawn while
-something is playing and for `PlayerService.stripGrace` (120 s) after playback
-stops or pauses, then disappears and the list reclaims the space. Verified by
-shortening the grace to 8 s: strip present while playing, still present 3 s after
-pausing, gone at 12 s.
+The closed notch already carries it — `WingContent` plus the chin, which widens
+the island by `2 * (height - 12) + 20` while `isPlaying`, giving artwork on one
+side and a waveform or pause glyph on the other. Nothing is shown when nothing is
+playing, and a paused track collapses back to the bare cutout.
 
-This is the answer to "I want to use the new panels while music plays". Music
-stops being a panel you must visit and becomes chrome plus one full panel. The
-alternative — keeping a music sidebar in every panel — costs ~110 pt of width
-in a 440 pt panel and makes the lists unusable.
-
-### Persistence
-
-One JSON file per store in `~/Library/Application Support/Dev Island/`, written
-debounced (~2 s) and atomically (`0600` permissions on `clipboard.json`):
-
-- `clipboard.json` — capped at 300 entries
-- `shelf.json` — file references/bookmarks
-- `ignore-rules.txt` — plain lines, regex per line
-- `defaults` in `UserDefaults` (default panel, per-panel prefs)
-
-No `terminal.json`: the history is re-parsed from `~/.zsh_history` on change
-(~50 KB, well under a millisecond), so there is no cache to keep in sync and no
-second copy of commands on disk.
+Consequence, accepted: a paused track is invisible until the island opens. That
+is the trade for not having chrome on the lists.
 
 ---
 
@@ -175,13 +212,30 @@ struct ClipEntry: Codable, Identifiable {
     var text: String
     var kind: ClipKind      // .text .command .url .path .code
     var firstSeen: Date
-    var lastUsed: Date
+    var lastUsed: Date     // last use: drives frecency and eviction
+    var lastCopied: Date?  // last time it entered the clipboard; what the row shows
     var uses: Int
 }
 ```
 
 Dedupe by hash; re-copying moves an entry to the top and increments `uses`.
 Cap 300, evict oldest-by-`lastUsed`.
+
+**Two timestamps, deliberately.** `lastUsed` moves on every paste and drives
+frecency and eviction; `lastCopied` moves only when the text actually goes onto
+the clipboard, and is the one the row's age chip shows. A single field made a
+path copied yesterday read "1m" because it had been clicked once — which looks
+like the clock is broken rather than like "last used". `touch` therefore also
+leaves the row where it is: pasting something is not copying it, and reordering
+on use made the list shuffle under the pointer right after a click.
+
+`lastCopied` is optional so stores written before it still decode, falling back to
+`firstSeen`. Load sorts by `copiedAt` rather than trusting file order, because the
+old order was by last use and the age column would otherwise jump around.
+
+Ages refresh on `TimelineView(.everyMinute)`. Not `.periodic(from: .now, ...)`:
+`.now` is re-evaluated on every render, which restarts the schedule and pins a
+core at 6%.
 
 **Write-back loop guard:** `writeText` syncs `lastChangeCount` to the count its
 own write caused, so the poll's `changeCount` equality check skips it. Do **not**
@@ -362,7 +416,7 @@ never touches the real file.
 | Piece | State |
 | --- | --- |
 | `ShelfStore` | Path + plain bookmark, dedupe by resolved path, cap 30, immediate `0600` write, dead references pruned on load |
-| `ShelfPanel` | File icon, name, parent folder, size; click reveals in Finder; right-click Open / Reveal / Copy Path / Remove |
+| `ShelfPanel` | File icon, name, parent folder, size; click reveals in Finder; right-click Open / Reveal / Copy Path / Remove. **Panel height follows the item count** — 102 pt with one file, +31 per file, capped at 260 where the list starts scrolling |
 | Drop | `public.file-url` only; anything else is rejected so the drag animates back rather than being silently swallowed |
 | Drag-in | Opens the shelf, not the default panel; a cancelled drag restores the previous panel |
 | Drag-out | `NSView` + `NSDraggingSource`, 3 pt threshold, copy-only, icon as the drag preview — **verified by use** |
@@ -603,11 +657,13 @@ replacement is one shared surface for every panel:
 | Artist | 12 @ 0.55 | 14 @ 0.5 |
 | Scrub bar | full-width row below the content | 3 pt, in the right column under the artist, times beneath it |
 | Times | inline | 10 pt monospaced digit, elapsed / remaining |
-| Transport | grey circles | `pause.fill` in a filled 28 pt **white** circle with a dark glyph; plain 13 pt glyphs either side, 16 pt apart |
+| Transport | grey circles | `pause.fill` in a filled 28 pt **white** circle with a dark glyph; plain 13 pt glyphs either side, 16 pt apart, centred under the text column |
 
 The player block is centred vertically and its right column is pinned to the
 artwork's height (`132 pt`), so the title sits beside the artwork instead of
-stretching to the panel's full height and leaving the artwork floating.
+stretching to the panel's full height and leaving the artwork floating. The panel
+is `440 × 190`: 132 pt of artwork plus scrub, times and a 28 pt transport row
+needs ~150 pt of content, and 310 was mostly empty.
 
 Not proposed: tap-artwork-to-flip. No value, extra state.
 
@@ -646,12 +702,13 @@ re-checking — it may mask the browser session.
 | Phase | Work | Effort |
 | --- | --- | --- |
 | 0 | Test YouTube/Chrome against the island; confirm clipboard paste-notice behaviour on this macOS build | **partial — never run** |
-| 1 | ~~Panel shell: `PanelID`, provider protocol, registry, window resizing, icon nav, default panel, now-playing strip~~ **done** | — |
+| 1 | ~~Panel shell: `PanelID`, provider protocol, registry, window resizing, icon nav, default panel~~ **done** | — |
 | 1.5 | ~~Rename to `dev.island` + `NSAppleEventsUsageDescription`; self-signed cert; `build.sh` signing; verify grants survive a rebuild~~ **done** | — |
 | 2 | ~~Clipboard provider + frequent strip + `AccessibilityPaster`~~ **done** | — |
 | 3 | ~~Terminal provider + ignore rules + redaction~~ **done** | — |
 | 4 | ~~Shelf: drag-in detector, store with bookmarks and load-time pruning, panel, file-only drop, drag-out~~ **done, verified by use** | — |
-| 5 | ~~Music visuals: blurred backdrop, 92 pt artwork, white transport circle~~ **done** | — |
+| 5 | ~~Music visuals: black glass, 132 pt artwork, white transport circle~~ **done** | — |
+| 5.5 | ~~Remove the now-playing strip, per-panel sizes, window resized at endpoints only~~ **done** | — |
 | 6 | Browser fallback, only if Phase 0 demands it | half day |
 
 Phases 1–3 are complete. The panel shell did turn each feature into a provider
@@ -689,18 +746,20 @@ show stale commands; it renders a notice strip when the option is missing.
    `|| true` is gone, and the requirement was verified byte-identical across two
    consecutive rebuilds. The certificate expires in 2036; recreating it means
    re-issuing the Accessibility grant.
-7. **See-through during a panel switch (fixed by construction, needs a
-   confirmation in use).** The symptom was the desktop appearing behind the island
-   mid-switch. Every panel is now the same size, so switching cannot resize the
-   window and there is no frame in which the window and the shape disagree — the
-   resize animation that produced it no longer exists. This is why the fix is
-   structural rather than a faster animation: the earlier attempts all tried to
-   make the resize keep up.
-   The expand/collapse animation still resizes, and that path measured clean
-   (monotonic, no overshoot, solid black throughout) after the redraw-loop fix.
-   It also had to be made main-thread-safe — see §1 — because SwiftUI's async
-   renderer invokes the size probe off the main thread and `NSWindow.setFrame`
-   traps there.
+7. **See-through during a panel switch (fixed by construction, verified).**
+   The symptom was the desktop appearing behind the island mid-switch. The window
+   is now resized only at the endpoints of a transition, and always to
+   `max(old, new)`, so it is never smaller than the shape. A window that is larger
+   only ever shows transparent margin around an already-drawn island, which is
+   indistinguishable from the island growing.
+   Verified by sampling the window bounds every 60 ms through a clipboard→music
+   switch: the window held `520 × 320` for the whole animation, then settled to
+   `440 × 190`. The same for expand (189 × 32 → 520 × 320) and collapse.
+   The earlier attempts all tried to make a per-frame window resize keep up; this
+   removes the per-frame resize instead.
+   The 8x slowed captures that never reproduced the bug are consistent with this:
+   at 8x the window had time to catch up between frames.
+
 8. **Hover cannot detect a drag (resolved, 14 Nov).** `installMonitors` used to
    subscribe to `.mouseMoved` and `.leftMouseDown` only. While a button is held the
    system posts `.leftMouseDragged` instead of `.mouseMoved`, so dragging a file
@@ -737,10 +796,10 @@ show stale commands; it renders a notice strip when the option is missing.
 
 ### Decided
 
-- **Panel sizes:** `440 × 162` (Music), `440 × 310` (Clipboard & Terminal), `440 × 240` (Shelf).
-- **Window sizing:** The window tracks the animated shape frame by frame through an `Animatable` size probe (`syncWindow`), rather than being snapped to the target. Both springs are critically damped so the window itself does not bounce. See risk 7 for the outstanding see-through report.
+- **Panel sizes:** `440 × 190` (Music), `520 × 320` (Clipboard & Terminal), `440 × content-height` (Shelf, 102–260).
+- **Window sizing:** The window is resized **only at the endpoints** of a transition — up to `max(old, new)` before the shape moves, back to the target after it settles — and never in between. The window is therefore never smaller than the shape, which is what removes the see-through (§2, risk 7). Springs stay critically damped because an overshoot would push the shape past the window.
 - **Spotlight trigger:** Removed (`⌘Space` is the precedent); Spotlight avoidance / suppression while `SpotlightState.isOpen` is retained.
-- **Music layout:** Keep `162 pt` height; place scrub bar in the right column beside `92 pt` artwork.
+- **Music layout:** `440 × 190`, `132 pt` artwork, scrub bar in the right column beside it (§6).
 - **Closed-state Spotify poll:** Gate the `1.5 s` AppleScript timer to `expanded` only; rely on notifications while closed.
 - **Click behaviour:** Auto-paste is in v1 (`⌘V` after collapse; `⌥`-click = copy only). Degrades silently to copy-only with `panelNotice` (`"Grant Accessibility to paste directly."`) when event-posting permission is absent.
 - **Terminal panel click:** Auto-paste with trailing newline stripped so a stray Return cannot execute a pasted command.
@@ -779,9 +838,9 @@ show stale commands; it renders a notice strip when the option is missing.
 
 ### Open decisions
 
-1. **Default panel on first hover** — Music or Clipboard?
-2. **Music as chrome + one panel** — confirm the 28 pt now-playing strip is
-   preferable to keeping music permanently visible.
+1. ~~**Default panel on first hover**~~ — Clipboard. Done.
+2. ~~**Music as chrome + one panel**~~ — neither. The strip was removed; music
+   lives in the closed notch only. Done.
 
 ---
 
@@ -869,7 +928,7 @@ re-check them the same way.
 | --- | --- |
 | `ISLAND_EXPANDED=1` | Opens the island and sets `model.locksOpen = true`, so it stays open and can be captured |
 | `ISLAND_PANEL=music\|clipboard\|terminal\|shelf` | Selects the panel before first paint |
-| `ISLAND_RENDER=1` + `ISLAND_RENDER_STATE=expanded\|playing\|wings` + `ISLAND_RENDER_PANEL=…` | Renders a static preview to PNG via `ImageRenderer` |
+| `ISLAND_RENDER=<path>` + `ISLAND_RENDER_STATE=expanded\|playing\|wings` + `ISLAND_RENDER_PANEL=…` | Renders a static preview to PNG via `ImageRenderer` |
 | `ISLAND_DRAG_PROBE=1` | Logs every `.leftMouseDragged` with both gate inputs (`content`, `count`, `base`, `inside`, `types`) to stderr. The only reliable way to inspect drag events — a standalone binary launched from a terminal does not inherit the app's TCC grant and sees nothing |
 
 `locksOpen` is the reason a screenshot session does not collapse under the
@@ -884,8 +943,16 @@ pointer; it is checked in `scheduleCollapse()` alongside `isInteracting` (§1).
   island window is up. Capture the full screen and crop.
 - Captures go black when the display sleeps or is locked (`CGDisplayIsAsleep=1`).
 - `screencapture` costs ~66–150 ms per frame, so it cannot resolve a 0.24–0.36 s
-  animation unless a temporary slowdown multiplier is in place. This is why risk 7
-  is still unresolved rather than disproved.
+  animation. Do not try to see a transition that way — the window bounds are the
+  thing to measure, not the pixels: sample `CGWindowListCopyWindowInfo` every 60 ms
+  and check that the window is never smaller than the island (risk 7).
+- `screencapture -l <windowid>` captures a window's whole buffer including
+  transparent area, which makes it the fastest way to inspect a panel without
+  depending on what is underneath it.
+- A second launch while the first is still shutting down exits on the `flock`, and
+  the window you then inspect belongs to the *old* process — which is exactly how a
+  stale 32 pt window got misdiagnosed as a collapse bug. Sleep 2–3 s after
+  `pkill` and confirm `pgrep` is empty before launching.
 - The app is single-instance via an exclusive `flock` on
   `~/Library/Application Support/Dev Island/instance.lock`. Kill the old process
   before relaunching, or the new one exits silently:
