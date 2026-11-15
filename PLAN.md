@@ -20,7 +20,7 @@ review; §11 records signing and installation.
 | 5.6 — history windows, `EXTENDED_HISTORY`, sandbox | done, verified against invented data |
 | 6 — media transport (§7) | done, verified with a browser |
 | 7 — browser artwork in a title-less diff | done |
-| 8 — paste confirmation | **pending (next)** |
+| 8 — paste confirmation | **done, verified** |
 | 9 — one music-panel size, aspect-fitted tile | done, verified live |
 | 10 — view dedup (review 1B) | pending |
 
@@ -335,25 +335,32 @@ click row
   editor.
 - ⌥-click = copy only, no keystroke. Plain click = copy + paste.
 
-### Paste confirmation (planned — Phase 8, design reopened)
+### Paste confirmation — done
 
-Auto-paste works but is **invisible**: the island collapses, ⌘V fires, and the only
-evidence is text appearing in an app you were already looking at. Click a row and
-nothing acknowledges it, so it reads as "did that do anything?" — and ⌥-click is
-indistinguishable from a failure to paste.
+Auto-paste was invisible: the panel collapses, ⌘V fires, and the only evidence is
+text appearing in an app you were already looking at. ⌥-click looked identical, so
+"did that do anything?" had no answer on screen.
 
-**The chin is the place for it** (§6): the closed island already widens while music
-plays, so a paste shows `✓ Pasted` (or `Copied` for ⌥-click) by widening for ~1 s
-with a tick instead of artwork. No new geometry — the mechanism exists and is cheap.
+The acknowledgement is a **toast below the island**, shown for 1.2 s:
 
-Constraints:
+| What happened | Message |
+| --- | --- |
+| Auto-paste | ✓ `Auto-pasted` |
+| ⌥-click, or autopaste off, or no grant | `Copied to clipboard` |
 
-- **Two outcomes, two signals.** ✓ Pasted, and "Copied" for ⌥-click.
-- **Toggleable** from the clipboard header and persisted, next to the window picker.
-  Off means no widening at all, not a dimmed one.
-- **Not a failure report.** With the grant missing the keystroke is dropped
-  silently, so a tick would be a lie; the Accessibility notice is the only signal
-  for that case.
+A sentence rather than a tick, because that *is* the question — a glyph cannot say
+whether it pasted or only copied. "Copied to clipboard" is not a fallback style: with
+the grant missing the keystroke is dropped, so claiming a paste would be a lie.
+
+**Why below the island and not in the chin.** The first design put the tick in the
+chin. The chin is only ~32 pt either side of the 185 pt camera cutout — enough for
+20 pt artwork and three bars, nowhere near enough for words. So the *window* grows
+downwards for the duration while the shape stays the island's size:
+`IslandModel.windowSize` is what the controller sizes to, `islandSize` still drives
+the shape. Transparent band, click-through while it is up.
+
+Toggleable from the clipboard header (a circled tick beside the autopaste pill),
+persisted; off means no toast at all.
 
 ### Timing
 
@@ -917,7 +924,7 @@ the fastest way to inspect what a player is publishing:
 | 5.6 | ~~`24h / 7d / 30d / All` windows on both history panels; `EXTENDED_HISTORY`; `ISLAND_DATA_DIR` sandbox~~ **done, verified against invented data** | — |
 | 6 | ~~Media transport: vendored `mediaremote-adapter` built from source, streamed through `MediaStream`~~ **done and verified with a real browser session** | — |
 | 7 | ~~Artwork arriving in a title-less diff was dropped~~ **done** — patches now applied; browser thumbnails work | — |
-| 8 | Paste confirmation in the closed notch, toggleable from the clipboard header (§3) | ~1 hour |
+| 8 | ~~Paste confirmation: a toast under the island, toggleable from the clipboard header~~ **done, verified** | — |
 | 9 | ~~One music-panel size; the tile follows the artwork's aspect so a thumbnail is not cropped~~ **done, verified with a live session** | — |
 | 10 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
 
