@@ -1203,24 +1203,38 @@ struct MusicPanel: View {
 // MARK: - Pieces
 
 struct Equalizer: View {
-    @State private var animating = false
-
+    /// Bars are driven from a timer at ~8 fps rather than a `repeatForever`
+    /// animation.
+    ///
+    /// Measured: with the implicit animation the closed chin cost **9% of a core**,
+    /// because it redrew the whole island at display rate. That is the state the
+    /// island spends most of its life in — music playing, nothing being looked at.
+    /// The same island expanded costs 1.7%, since the chin is not on screen.
+    ///
+    /// At 8 fps the bars still read as a waveform and the cost drops to noise. The
+    /// schedule starts from a fixed epoch, not `.now`: `.now` is re-evaluated on
+    /// every render, which restarts the schedule and pins a core — the same trap as
+    /// the clipboard's age timeline.
     var body: some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(0..<3, id: \.self) { index in
-                Capsule()
-                    .fill(.white.opacity(0.85))
-                    .frame(width: 2.5, height: animating ? CGFloat(9 + index * 2) : 4)
-                    .animation(
-                        .easeInOut(duration: 0.45)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(index) * 0.12),
-                        value: animating
-                    )
+        TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: 0.12)) { context in
+            let phase = context.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .center, spacing: 2) {
+                ForEach(0..<3, id: \.self) { index in
+                    Capsule()
+                        .fill(.white.opacity(0.85))
+                        .frame(width: 2.5, height: height(index: index, phase: phase))
+                }
             }
+            .frame(height: 12)
         }
-        .frame(height: 12)
-        .onAppear { animating = true }
+    }
+
+    /// Two out-of-step sines, so the bars do not look like one animation with a
+    /// delay bolted on.
+    private func height(index: Int, phase: TimeInterval) -> CGFloat {
+        let speed = 6.0 + Double(index) * 1.4
+        let wobble = sin(phase * speed + Double(index) * 1.7)
+        return 4 + CGFloat((wobble + 1) / 2) * (4 + CGFloat(index) * 2)
     }
 }
 
