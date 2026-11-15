@@ -1,13 +1,49 @@
 # Dev Island
 
-A personal dev toolbox that lives in the MacBook notch. Music, clipboard history,
-terminal history and a file shelf in one panel that drops out of the cutout on
-hover, plus a now-playing chin and a paste acknowledgement that appear while the
-island is closed.
+A personal dev toolbox that lives in the MacBook notch. Clipboard history, shell
+history, a file shelf and now-playing controls share one panel that drops out of the
+cutout on hover — plus a now-playing chin and a paste confirmation that appear while
+the island is closed.
 
-![Clipboard panel](docs/clipboard.png)
+![Clicking a clipboard row pastes it into the app you came from](docs/autopaste.gif)
+
+*A click pastes into whatever had focus; the toast under the notch says so. `⌃⌥↓`
+opens it from the keyboard, `⌃⌥→` cycles panels.*
 
 Source-only: there are no release binaries. Build it with `./build.sh` (below).
+
+## What it does
+
+| Panel | What it holds |
+| --- | --- |
+| **Clipboard** | Copy history with frecency chips, ages and kinds. Click a row to paste it into whatever had focus |
+| **Terminal** | `~/.zsh_history`, trivia filtered, with a `24h / 7d / 30d / All` window |
+| **Shelf** | File references dropped on the closed notch. Drag them back out to move them |
+| **Music** | Artwork, scrub and transport for whatever the system calls "now playing" |
+
+![The four panels in use](docs/panel-tour.gif)
+
+*Clipboard → Terminal → Shelf → Music, on `⌃⌥→`.*
+
+## Using it
+
+- **Open** by hovering the notch; it closes shortly after the pointer leaves.
+- **Open from the keyboard** with `⌃⌥↓`, which toggles the island open or closed.
+- **Switch panels** with the icons either side of the cutout, `⌥1`–`⌥4`, or
+  `⌃⌥←` / `⌃⌥→` to cycle (also `⌥Tab` / `⌥⇧Tab`). The panel shortcuts only exist
+  while the island is open; the open key is always armed.
+- **Click a row** to paste into whatever had focus, or copy. `⌥`-click always
+  copies. The **Autopaste** pill toggles the default and is remembered; either way
+  a short toast says what happened — `Auto-pasted` or `Copied to clipboard`.
+- **Drag a file at the closed notch** to put it on the shelf; drag it out again to
+  move it where it belongs. The shelf holds references, so removing a row never
+  touches the real file.
+- **Quit** from the capsule in the menu bar. There is deliberately no login item.
+
+Only the four panel keys are tied to the island being open. Why the shortcuts sit on
+`⌃⌥` and `⌥` rather than `⌘1`–`⌘4` is recorded in `PLAN.md` §2 ("Navigation"):
+macOS and most apps claim ⌘-number and ⌃-number before a Carbon hotkey is consulted,
+so those never arrive.
 
 ## Requirements
 
@@ -25,10 +61,10 @@ cd DevIsland
 ./build.sh
 ```
 
-That compiles the app and the vendored media helper, signs both, moves the bundle
-to `~/Applications/Dev Island.app`, registers it with LaunchServices, and leaves
-`DevIsland.app` in the repo as a symlink to it. After that, **⌘Space → "Dev
-Island"** launches it.
+That compiles the app and the vendored media helper, signs both, moves the bundle to
+`~/Applications/Dev Island.app`, registers it with LaunchServices, and leaves
+`DevIsland.app` in the repo as a symlink to it. After that, **⌘Space → "Dev Island"**
+launches it.
 
 ### Signing, and why it matters here
 
@@ -78,37 +114,7 @@ setopt EXTENDED_HISTORY     # timestamp entries, needed by the 24h/7d/30d window
 Without the first the panel shows stale history and says so; without the second,
 commands have no timestamps and only appear under "All".
 
-## Using it
-
-- **Open** by hovering the notch; it closes shortly after the pointer leaves.
-- **Open from the keyboard** with `⌃⌥↓`, which toggles the island open or closed.
-- **Switch panels** with the icons either side of the cutout, `⌥1`–`⌥4`, or
-  `⌃⌥←` / `⌃⌥→` to cycle (also `⌥Tab` / `⌥⇧Tab`). The panel shortcuts only exist
-  while the island is open; the open key is always armed.
-- **Click a row** to paste into whatever had focus, or copy. `⌥`-click always
-  copies. The **Autopaste** pill toggles the default and is remembered; either way
-  a short toast says what happened — `Auto-pasted` or `Copied to clipboard`.
-- **Time windows** — `24h / 7d / 30d / All` on both history panels. A filter, not
-  retention: choosing 24h hides rows and deletes nothing.
-- **Drag a file at the closed notch** to put it on the shelf; drag it out again
-  to move it where it belongs. The shelf holds references, so removing a row never
-  touches the real file.
-- **Quit** from the capsule in the menu bar. There is deliberately no login item.
-
-| Panel | Size | What it holds |
-| --- | --- | --- |
-| Clipboard | 520 × 320 | History with frecency chips, ages, kinds |
-| Terminal | 520 × 320 | `~/.zsh_history`, trivia filtered |
-| Shelf | 440 × 102–260 | File references; height follows the count |
-| Music | 520 × 190 | Artwork, scrub, transport |
-
-![Terminal panel](docs/terminal.png)
-
-![Music panel](docs/music.png)
-
-The screenshots use sample data.
-
-### Media
+## Media
 
 Anything the system reports as "now playing" — Spotify, Apple Music, a browser
 playing YouTube, VLC — with title, artist, position and, where the player publishes
@@ -149,7 +155,7 @@ The two `setopt` lines in `~/.zshrc` are harmless but can go too.
 | `Sources/` | The app. `PLAN.md` §14 maps each file to its job |
 | `vendor/mediaremote-adapter/` | BSD-3 source for the media helper, compiled by `build.sh` |
 | `build.sh` | Build, sign, install, register |
-| `docs/` | Screenshots |
+| `docs/` | Screen recordings of the app in use |
 | `PLAN.md` | The design document: what was built, what was rejected and why, measured facts, risks |
 | `MIGRATION.md` | Notes from the bundle-ID rename, kept for the record |
 
