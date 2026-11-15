@@ -145,7 +145,7 @@ final class ClipboardProvider: PanelProvider {
     }
 
     func start() {
-        model.panelNotice = nil
+        model.panelNotice = model.pastePermissionNotice
     }
 
     func stop() {}
@@ -165,11 +165,15 @@ final class TerminalProvider: PanelProvider {
 
     func start() {
         model.terminal.startWatching()
-        model.panelNotice = model.terminal.notice
+        // A missing grant outranks stale history: it changes what every click does.
+        model.panelNotice = model.pastePermissionNotice ?? model.terminal.notice
         // The notice can appear after the first parse (file watcher, re-parse).
         noticeSubscription = model.terminal.$notice
             .receive(on: RunLoop.main)
-            .sink { [weak self] notice in self?.model.panelNotice = notice }
+            .sink { [weak self] notice in
+                guard let self else { return }
+                self.model.panelNotice = self.model.pastePermissionNotice ?? notice
+            }
     }
 
     func stop() {

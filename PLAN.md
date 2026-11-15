@@ -349,9 +349,9 @@ Design constraints:
   showing artwork and a waveform; the confirmation takes precedence for its second
   and then reverts, rather than the two trying to share the band.
 - **Failure must stay loud.** `AccessibilityPaster.postPaste()` returning false
-  no longer reports anything — see the permission note below. A failed paste is
-  indistinguishable from a successful one, so the confirmation must not imply
-  either.
+  must not double as a failure report: with the grant missing the keystroke is
+  dropped silently, so a tick would be a lie. The Accessibility notice is the only
+  signal for that case.
 
 Open question, deliberately not decided here: whether a 1 s chin is better than
 delaying the collapse by ~600 ms and showing the confirmation in the panel. Delay
@@ -382,17 +382,24 @@ untested fallback would have been dead code pretending to be insurance.
 
 ### Permission handling
 
-- **Permission is not modelled at all.** Both preflights were measured reporting
-  `false` for the app launched from Spotlight — `post=false ax=false` — while
-  posting worked. So the check cannot be used to gate (it silently killed
-  auto-paste for anyone who launched the app normally, because `deliverPaste`
-  guarded on it) and it cannot be used to warn (it showed "Grant Accessibility"
-  over an app that pasted fine). `postPaste()` always attempts the event, and no
-  code path consults a permission API.
-- If a grant is ever genuinely missing the keystroke does nothing. That is the
-  cost of not being able to ask the question reliably, and it is smaller than
-  refusing to paste at random.
-- Nothing prompts. `AXIsProcessTrustedWithOptions` is not used.
+- **Posting a synthetic ⌘V needs the Accessibility grant, and only the app's own
+  grant counts.** This cost a full detour, so it is worth stating precisely:
+  launched *from a terminal*, both preflights report `true`; launched from
+  Spotlight or Finder, both report `false`. A terminal-launched process is
+  attributed to the terminal, which already holds the grant; a LaunchServices
+  launch is its own responsibility. Auto-paste therefore appeared to work in every
+  test that ran the binary directly — including the ones that "proved" TCC
+  survived the move to `~/Applications` — and failed the moment the app was opened
+  the way a person opens it.
+- **Never test TCC from a terminal launch.** It reports the terminal's grant, not
+  the app's. Use `open --env … -a "Dev Island"` if the panel needs to be open, or
+  launch it from Spotlight.
+- The app asks once per launch (`AXIsProcessTrustedWithOptions` with the prompt
+  option) and the notice strip is a **button** that opens
+  Privacy & Security → Accessibility. The notice is computed from the live grant,
+  not a cached value, so granting clears it on the next panel open.
+- `postPaste()` is not gated on the check: with no grant the event is dropped
+  anyway, so attempting costs nothing.
 - **Auto-paste has a toggle** (the bolt in both history headers, persisted in
   `UserDefaults`, on by default). Off means copy-only, the same result as ⌥-click,
   which keeps working either way. No warning is shown when it is off — copy-only is
@@ -999,11 +1006,11 @@ any of them can be reversed.
 - **Spotlight trigger:** Removed (`⌘Space` is the precedent); Spotlight avoidance / suppression while `SpotlightState.isOpen` is retained.
 - **Music layout:** `440 × 190`, `132 pt` artwork, scrub bar in the right column beside it (§6).
 - **Closed-state Spotify poll:** Gate the `1.5 s` AppleScript timer to `expanded` only; rely on notifications while closed.
-- **Click behaviour:** Auto-paste is the default (`⌘V` after collapse); `⌥`-click is copy-only. A **Paste / Copy** pill in both history headers toggles the default and is persisted, so the setting is visible rather than implied. No permission check anywhere — see §3.
+- **Click behaviour:** Auto-paste is the default (`⌘V` after collapse); `⌥`-click is copy-only. An **Autopaste On / Off** pill in both history headers toggles the default and is persisted. A missing Accessibility grant is surfaced as an actionable notice, not as a silent failure — see §3.
 - **Terminal panel click:** Auto-paste with trailing newline stripped so a stray Return cannot execute a pasted command.
 - **Signing identity:** Self-signed Code Signing certificate (`Dev Island Local Signing`), not ad-hoc, so TCC Accessibility and Automation grants survive rebuilds.
 - **Clipboard capture while closed:** Accepted (`0.4 s` `changeCount` integer compare).
-- **Auto-paste is a preference, not a constant.** A pill reading **Paste** or **Copy** in both history headers states what a click will do, rather than using a symbol that has to be decoded. Persisted; ⌥-click remains per-click copy-only. One setting shown on both panels, because a switch only reachable from the clipboard is invisible while you are looking at the terminal.
+- **Auto-paste is a preference, not a constant.** A pill labelled **Autopaste** with **On** or **Off** in both history headers — named for the setting rather than for the outcome, because "Paste / Copy" read as an action button rather than a state. Persisted; ⌥-click remains per-click copy-only. One setting shown on both panels.
 - **Paste confirmation lives in the closed notch, not in the panel.** The panel is gone by the time ⌘V lands, so the acknowledgement has to survive the collapse: the chin widens for ~1 s with ✓ Pasted, or "Copied" for ⌥-click. Toggleable from the clipboard header and off means off — no chin at all. Phase 7.
 - **Testing never touches real data.** `ISLAND_DATA_DIR` redirects every store plus the instance lock, and `ISLAND_HISTORY` points the terminal panel at a fixture. The time windows were verified that way; the shell history and `clipboard.json` were confirmed untouched afterwards.
 - **History windows are a filter, never retention.** `24h / 7d / 30d / All` per panel, applied to both the list and the chips. Nothing is deleted; a shorter clipboard cap is the separate, safe lever if storage ever needs to shrink.

@@ -64,6 +64,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller?.show()
         buildStatusItem()
 
+        // Ask for Accessibility at launch rather than on the first paste, so the
+        // grant can be sorted before it is needed.
+        AccessibilityPaster.promptIfNeeded()
+
     }
 
     func applicationWillTerminate(_ notification: Notification) {

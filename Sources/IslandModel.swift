@@ -32,10 +32,21 @@ final class IslandModel: ObservableObject {
     ///
     /// Persisted: this is a preference about how the app behaves, not view state.
     @Published var autoPasteEnabled: Bool {
-        didSet { UserDefaults.standard.set(autoPasteEnabled, forKey: Self.autoPasteKey) }
+        didSet {
+            UserDefaults.standard.set(autoPasteEnabled, forKey: Self.autoPasteKey)
+            panelNotice = pastePermissionNotice
+        }
     }
 
     private static let autoPasteKey = "autoPasteEnabled"
+
+    /// Why a click will only copy. Read from the live grant, not a cached copy, so
+    /// granting Accessibility in System Settings clears it on the next panel open
+    /// rather than needing a relaunch.
+    var pastePermissionNotice: String? {
+        guard autoPasteEnabled, !AccessibilityPaster.canPost else { return nil }
+        return "Auto-paste needs Accessibility — click to open System Settings"
+    }
 
     /// Called synchronously whenever something that changes `islandSize` changes.
     /// Set by `IslandController` once its window exists.

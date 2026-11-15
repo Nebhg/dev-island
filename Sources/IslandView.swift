@@ -173,7 +173,15 @@ struct ExpandedPanel: View {
 
             VStack(spacing: 0) {
                 if let notice = model.panelNotice {
-                    NoticeStrip(text: notice)
+                    // Only the Accessibility notice is actionable; the providers
+                    // put it ahead of any panel-specific one, so this is the right
+                    // test rather than a string comparison.
+                    NoticeStrip(
+                        text: notice,
+                        action: model.pastePermissionNotice != nil
+                            ? AccessibilityPaster.openSettings
+                            : nil
+                    )
                     Color.clear.frame(height: 6)
                 }
 
@@ -287,12 +295,12 @@ struct PasteToggle: View {
     var body: some View {
         Button(action: toggle) {
             HStack(spacing: 4) {
-                Image(systemName: enabled ? "arrow.down.doc" : "doc.on.doc")
-                    .font(.system(size: 9, weight: .semibold))
-                Text(enabled ? "Paste" : "Copy")
-                    .font(.system(size: 9, weight: .semibold))
+                Text("Autopaste")
+                    .foregroundStyle(.white.opacity(0.4))
+                Text(enabled ? "On" : "Off")
+                    .foregroundStyle(.white.opacity(enabled ? 0.9 : 0.45))
             }
-            .foregroundStyle(.white.opacity(enabled ? 0.9 : 0.5))
+            .font(.system(size: 9, weight: .semibold))
             .padding(.horizontal, 6)
             .frame(height: 14)
             .background(
@@ -302,7 +310,8 @@ struct PasteToggle: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(enabled ? "A click pastes into the front app — click for copy-only" : "A click only copies — click to paste instead")
+        .help("On: a click pastes into the front app. Off: a click only copies. "
+              + "⌥-click always copies.")
     }
 }
 
@@ -341,8 +350,21 @@ struct HistoryWindowPicker: View {
 /// Shown when a provider reports its panel is degraded rather than broken.
 struct NoticeStrip: View {
     let text: String
+    /// When set, the strip becomes a button — used by the Accessibility notice,
+    /// which is the only one the user can act on.
+    var action: (() -> Void)?
 
     var body: some View {
+        if let action {
+            Button(action: action) { content(actionable: true) }
+                .buttonStyle(.plain)
+                .help(text)
+        } else {
+            content(actionable: false)
+        }
+    }
+
+    private func content(actionable: Bool) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 9, weight: .bold))
@@ -351,9 +373,15 @@ struct NoticeStrip: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
+            if actionable {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .opacity(0.7)
+            }
         }
         .foregroundStyle(.orange.opacity(0.85))
         .frame(height: 14)
+        .contentShape(Rectangle())
     }
 }
 
