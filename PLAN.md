@@ -9,7 +9,7 @@ review; §11 records signing and installation.
 | Phase | State |
 | --- | --- |
 | 0a — YouTube/Chrome media | **done, verified by use** |
-| 0b — macOS pasteboard read banner | not run |
+| 0b — macOS pasteboard read prompt | not run; no prompt has ever appeared |
 | 1 — panel host | done |
 | 1.5 — rename + self-signed signing | done |
 | 2 — clipboard panel + auto-paste | done, verified by use |
