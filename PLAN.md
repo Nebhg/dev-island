@@ -22,7 +22,7 @@ review; §11 records signing and installation.
 | 7 — browser artwork in a title-less diff | done |
 | 8 — paste confirmation | **done, verified** |
 | 9 — one music-panel size, aspect-fitted tile | done, verified live |
-| 10 — view dedup (review 1B) | pending |
+| 10 — view dedup (review 1B) | **done, pixel-verified** |
 
 Goal: turn a single-purpose music notch into a panel host with a clipboard
 history panel, a terminal-history panel, and a file shelf, plus a visual
@@ -926,7 +926,7 @@ the fastest way to inspect what a player is publishing:
 | 7 | ~~Artwork arriving in a title-less diff was dropped~~ **done** — patches now applied; browser thumbnails work | — |
 | 8 | ~~Paste confirmation: a toast under the island, toggleable from the clipboard header~~ **done, verified** | — |
 | 9 | ~~One music-panel size; the tile follows the artwork's aspect so a thumbnail is not cropped~~ **done, verified with a live session** | — |
-| 10 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
+| 10 | ~~View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader`~~ **done, pixel-verified** (§13) | — |
 
 Phases 1–5.6 are complete. The panel shell did turn each feature into a provider
 plus a view: the clipboard and terminal panels each landed without touching the
@@ -1259,7 +1259,7 @@ them were already fixed when the document was read, because it was taken before
 | # | Finding | Status |
 | --- | --- | --- |
 | 1A | Application Support boilerplate in four places | **done** — `AppSupport.directory()` (`ff2505e`) |
-| 1B | Duplicated panel subviews | **pending** — Phase 10, see below |
+| 1B | Duplicated panel subviews | **done** — `PanelChrome.swift`, pixel-verified (§13) |
 | 1C | Atomic JSON write duplicated in both stores | **done** — `AtomicJSON.write` (`ff2505e`) |
 | 2.1 | `PlaceholderPanel` unreachable since `ExpandedPanel` became exhaustive | **done** — deleted (`674f7e3`) |
 | 2.2 | Orphaned doc comment left mid-sentence above `NoticeStrip` | **done** — deleted (`674f7e3`) |
