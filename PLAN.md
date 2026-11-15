@@ -142,23 +142,32 @@ the pointer is inside it, and `handleMouse` treats that rect as inside until the
 pointer actually leaves it. It is cleared on expand and when the pointer exits
 the captured rect.
 
-The `32 pt` physical notch, the panel bar in that band, and padding consume
-`~40 pt` of vertical chrome. Sizes differ by panel:
+The physical notch (32 pt on the first machine, 37.5 on the second), the panel bar
+in that band, and padding consume vertical chrome. Sizes differ by panel:
 
 | Panel | Size (pt) | Why |
 | --- | --- | --- |
 | Clipboard | 520 × 320 | wide rows: text, source and age on one line; FREQUENT chips stop wrapping |
 | Terminal | 520 × 320 | long commands stop truncating |
-| Shelf | 440 × 102–260 | **height follows the file count**; 102 with one file, capped at 260 before it scrolls |
-| Music | 520 × 190 | one size for every source; the artwork tile follows the image's aspect so nothing is cropped (§6) |
+| Shelf | 440 × 106–260 | **height follows the file count**; 106 with one file on a 32 pt notch, capped at 260 before it scrolls |
+| Music | 520 × (notch + 156) | 188 on a 32 pt notch, 193.5 on 37.5: the artwork plus the panel padding above and below; the tile follows the image's aspect so nothing is cropped (§6) |
+| Settings | 520 × (notch + 233) | six 34 pt rows with a 1 pt gap between them (§15) |
 
 Clipboard and terminal are deliberately identical, so switching between the two
 most-used panels moves nothing at all.
 
-The shelf is the one panel that is not a fixed size — see §5. Its height is
-`notchHeight + 38 + 31·items + 1`, capped at 260. A fixed 260 reserved room for six
-rows even when one file was dropped, which left a mostly empty card hanging under
-the notch.
+**Fixed heights were the second pass's main layout bug.** The music panel was a
+constant 190, tuned on a 32 pt notch; on a 37.5 pt notch the band took 5.5 pt more
+of it and the padding under the artwork fell to 9 pt, against 13 at the sides.
+Every height that holds content under the band is now `notchHeight + …`, computed
+in `IslandModel.islandSize`. The list panels stay a fixed 320 because their lists
+scroll, so a taller band only costs a row of visible history.
+
+The shelf's height follows its contents — see §5. It is
+`notchHeight + 44 + 31·items − 1` (the 12 pt padding above and below, the 14 pt
+header and the 6 pt gap under it, then 30 pt rows with a 1 pt gap between them),
+capped at 260. A fixed 260 reserved room for six rows even when one file was
+dropped, which left a mostly empty card hanging under the notch.
 
 Adding or removing a file resizes the window the same way a panel switch does, and
 this is the case that shows why the trigger has to live in the model. **The
@@ -178,10 +187,10 @@ watching those), and the shelf cannot, because it is a different object.
 
 The switcher sits **in the menu-bar band either side of the physical cutout**,
 which is otherwise dead screen space the island reserves and never uses. Two
-icons left of the notch, two right, in this order:
+icons left of the notch, three right, in this order:
 
 ```
-  clipboard  terminal  |  (notch)  |  shelf  music
+  clipboard  terminal  |  (notch)  |  shelf  music  settings
 ```
 
 Active at full white, inactive at 0.3. This replaced a bottom nav row, which cost
@@ -193,20 +202,33 @@ The band is measured from `activePanel.preferredSize`, not from the window, so t
 icons stay put even while the window is still the larger of the two sizes.
 
 **Keyboard shortcuts**, because the pointer is often nowhere near the notch:
-`⌃⌥↓` opens or closes the island, `⌥1`–`⌥4` jump straight to a panel in display
-order, `⌃⌥←` / `⌃⌥→` cycle (as do `⌥Tab` / `⌥⇧Tab`).
-`⌘1`–`⌘4` is what the hand reaches for and what the system takes first — ⌘-number
+`⌃⌥↓` opens or closes the island, `⌥1`–`⌥5` jump straight to a panel in display
+order, `⌃⌥←` / `⌃⌥→` cycle (as do `⌥Tab` / `⌥⇧Tab`), and `⌃⌘V` opens the keyboard
+selection (§3).
+`⌘1`–`⌘5` is what the hand reaches for and what the system takes first — ⌘-number
 and ⌃-number are claimed by tab switching and Spaces before a Carbon hotkey is
-consulted, so the previous `⌥⌘1`–`⌥⌘4` set never reliably arrived. Plain `⌥` is
-unclaimed. The open key keeps a second modifier because, unlike the panel keys, it
-is registered for the whole process — a bare `⌥↓` would take next-paragraph away
-from every text editor all day.
+consulted, so both the original `⌥⌘1`–`⌥⌘4` set and the later `⌘`-number attempt
+never reliably arrived. Plain `⌥` is unclaimed. The open key keeps a second
+modifier because, unlike the panel keys, it is registered for the whole process — a
+bare `⌥↓` would take next-paragraph away from every text editor all day.
+
 Carbon `RegisterEventHotKey`, not an `NSEvent` monitor — a global key monitor needs
-Accessibility and the island never becomes the active app. The panel and cycle keys
-are registered only while the island is expanded, so they cannot shadow anything
-system-wide when it is closed; `⌃⌥↓` is the exception, registered for the process
-lifetime, because a closed island is exactly when it is needed. Its cost is written
-down next to the keys in `Sources/HotKeys.swift`.
+Accessibility and the island never becomes the active app. **Three registration
+groups**, each alive only while it can mean something:
+
+| Group | Lifetime | Contents |
+| --- | --- | --- |
+| always | the process | `⌃⌥↓`; the clipboard shortcut, when it is on |
+| panel | while expanded | `⌥1`–`⌥5`, `⌃⌥←/→`, `⌥Tab` / `⌥⇧Tab` |
+| picker | while a history row is selected | `↩`, `⌥↩`, `⎋` |
+
+One Carbon handler serves all three for the process lifetime, and `Slot` is a single
+raw-value namespace so a hotkey id identifies exactly one chord — the merge in §15
+had to renumber it by hand, because two branches had inserted into it at different
+offsets. Panel-group chords are overloaded rather than duplicated: `⌃⌥←/→` cycles
+panels normally and moves the selected row while the keyboard selection is on, so
+row movement costs no extra registration. The costs are written next to the keys in
+`Sources/HotKeys.swift`, including the one deliberate exception (`⌥Tab`).
 
 **Measured, macOS 26: registration success is not evidence of availability.**
 `RegisterEventHotKey` returns `noErr` and a usable reference for a chord another
@@ -256,13 +278,24 @@ are tested without touching real shell history.
 
 ### Default panel
 
-**Clipboard.** It is the panel that is useful the instant the island opens — you
-open it to get something back, not to look at something. Submenu on the existing
-status item (`Sources/App.swift`), persisted in `UserDefaults`. No settings window.
+**Last used, by default.** Hover reopens on whichever panel was showing when the
+island closed — after dropping a file on the shelf, the next hover shows the shelf,
+where it used to snap back to Clipboard. That was the first thing reported on the
+second machine. `activePanel` is persisted (`lastPanel`) so it also survives a
+relaunch; previews do not write it (`PreviewMode.active`, which until then was set
+but read by nothing).
 
-A stored `music` is treated as the old default rather than a choice and migrated
-to clipboard, so existing installs get the new behaviour instead of being stuck
-on a panel nobody picked.
+A fixed default is still available — **Default Panel** on the status item, or
+*Opens on* in Settings — and **Clipboard** remains the fallback when nothing is
+stored: it is the panel that is useful the instant the island opens. A stored
+`music` default is still migrated to clipboard, as before.
+
+Two things never become the panel hover reopens on, because both are detours rather
+than choices: **Settings** (closing on it returns to the last content panel) and the
+**keyboard selection** (it puts back the panel it replaced, unless a different
+panel was picked while it was on). `PanelID.contentPanels` is the list for both;
+`allCases` — which includes Settings — is what the number keys index, because that
+is what makes `⌥5` reach the gear.
 
 ### Music while another panel is open
 
@@ -408,6 +441,56 @@ the shape. Transparent band, click-through while it is up.
 
 Always shown. A toggle existed for it in the header for one round and was removed:
 an acknowledgement you have to switch on is one you have to remember exists.
+
+### Keyboard selection — both lists
+
+Getting something back used to take the pointer: hover the notch, switch to the
+clipboard if it was not the last panel, click. The keyboard selection is that path,
+modelled on Windows' ⊞V:
+
+| Key | Does |
+| --- | --- |
+| `⌃⌘V` | Opens the island on the clipboard with the first row selected; pressed again, ends the mode |
+| `⌃⌥←` / `⌃⌥→` | Move the selection; the list scrolls only as far as it must |
+| `⌥1`–`⌥5` | Switch panel, and re-target the selection to that list's first row |
+| `↩`, keypad Enter | Paste the selection — the click path, so Autopaste applies |
+| `⌥↩` | Copy only, like ⌥-click |
+| `⎋`, a click elsewhere, switching apps | End the mode |
+
+- **It is not clipboard-specific.** `listSelection` names a panel and a row, so the
+  terminal list is driven by the same machinery; `⌃⌘V` then `⌥2` reaches a command
+  with no second shortcut and no second registration set.
+- **The selection is an id, not an index.** Both lists change under it — a new copy
+  arrives at row 0, zsh appends a command — and an index silently moves the
+  highlight onto a different row while the user is not looking. The index is derived
+  where one is needed; the row is `""` for an empty list, which no id can be.
+- **The selection is the only per-list difference in the paste path.** One switch in
+  `IslandModel.paste(panel:rowID:autoPaste:)` calls `pasteClipboard` or
+  `pasteTerminal`, because a clipboard row must bump its frecency and a command must
+  not land in clipboard history.
+- **Focus never moves**, for the same reason clicks work (*Focus*, below): Carbon
+  hot keys are delivered without activating the app, so the paste lands in the app
+  that was in front.
+- **`↩` and `⎋` are global while registered** — unmodified keys, taken from every
+  app. So they are registered only while `listSelection` is non-nil, from a
+  synchronous sink rather than a next-turn one, and **every** exit ends it: a paste,
+  a copy, `⎋`, any collapse, an outside click, a panel that is not a list, and
+  `didActivateApplicationNotification` (⌘Tab — the same notification that catches
+  Spotlight). Risk 13 is what happens if one is ever missed. The bare arrows an
+  earlier design also took are gone: row movement rides the panel group instead.
+- **The pointer being elsewhere is the normal case**, so `scheduleCollapse` ignores
+  pointer exit while the selection is on — and `pinnedOpen` guards the same timer, so
+  neither relies on the order of calls inside `handleMouse` (§15).
+- **The shortcut is a preset, not a recorder**: `⇧⌘V`, `⌥⌘V`, `⌃⌘V` or off, on the
+  status item and in Settings. Each takes over one shortcut elsewhere, which a menu
+  cannot hide: `⇧⌘V` is Paste and Match Style in Chrome, Slack, Docs and Notion;
+  `⌥⌘V` is Finder's Move Item Here; `⌃⌘V` is the least-used of the three, and is
+  the default. Nothing is shown for a failed registration, because registration does
+  not fail in a way that can be detected — see §2, *Measured*.
+
+**Inferred, untested**: that a taken chord is what "the shortcut does nothing"
+would look like. It has never been reproduced here; the one report was `⌥↓` pressed
+without `⌃`.
 
 ### Timing
 
@@ -724,6 +807,60 @@ terminal it does not inherit the app's TCC grant and receives nothing, which loo
 identical to Finder swallowing the events. The probe inside the signed app is the
 only reliable way to ask.
 
+### Dock stacks — **unverified**
+
+Dragging a file out of the Dock's Downloads stack did nothing; from Finder it
+worked. A listen-only probe outside the app — a global monitor, and a 20 Hz poll of
+the drag pasteboard and of the window under the pointer — showed the two drags are
+the same from outside:
+
+| | Finder | Dock stack |
+| --- | --- | --- |
+| Global `.leftMouseDragged` delivered | yes | **yes** — 31 to 130 per drag |
+| Drag pasteboard | `public.file-url`, … | `public.file-url`, `NSFilenamesPboardType`, `com.apple.finder.node`, `Apple URL pasteboard type`, `CorePasteboardFlavorType 0x6675726C`, two `dyn.` types |
+
+So detection was never the problem — although most of the test drags were released
+42–88 pt below the top edge, short of the old hot zone, which the 100 pt reach now
+covers. (One press on the Dock produced 349 dragged events and no pasteboard write
+at all: almost certainly the stack's own tile being dragged, not a file.)
+
+That leaves the drop. It has three layers now, because which one the Dock trips is
+not known:
+
+1. **The operation.** SwiftUI's `onDrop` always proposes a copy, and a source that
+   does not offer one gets the no-entry cursor. `FileDropView` reads
+   `draggingSourceOperationMask` and takes the first of **copy, link, generic** —
+   and refuses a drag that offers nothing but move. Nothing is copied or moved
+   whichever it is, because the shelf only records a reference, and advertising a
+   move the shelf cannot perform would invite the source to delete or relocate the
+   original.
+2. **When the data is read.** The first AppKit version read the file URLs in
+   `draggingEntered` to decide whether to accept. Finder supplies them at once; a
+   source that supplies them only once the drag ends answers with nothing, and the
+   drop is refused before it can happen. It still failed from the Dock, so the
+   decision now uses the pasteboard's **types** alone, and the URLs are read in
+   `performDragOperation`, falling back to `NSFilenamesPboardType`.
+3. **A safety net that needs no drop at all.** The hover monitor sees every drag,
+   and the drag pasteboard still holds the files after the button comes up. If a
+   file is released over the open shelf and no drop has arrived 250 ms later,
+   `restorePanelIfDragWasCancelled` reads the files from the drag pasteboard
+   itself. `awaitingReleasedFiles` holds the stale-pasteboard clear (*The drag
+   detector*, above) off until then, and a press that began on the island — a shelf
+   row being dragged out — is excluded, as is any drag `FileDropView` refused. The
+   cost, if this is the path that fires, is cosmetic: the source animates the drag
+   back while the file lands anyway.
+
+**Why the drop view is not hidden by SwiftUI.** Measured: an `NSHostingView`
+registers no drag types of its own; `onDrop` adds a hidden
+`_PlatformDraggingDestinationView` registered for `public.data` / `public.item`
+over its region. With no `onDrop` inside the island, nothing in the host claims a
+drag, so drags fall through to `FileDropView` behind it.
+
+**To verify:** run with `ISLAND_DRAG_PROBE=1 … 2> drag.log` and drag from the
+Downloads stack. The log names the path that took the file — `drop target entered
+mask=… chosen=…`, `drop performed files=… readTook=…`, or `no drop arrived; safety
+net read N file(s)` — and an unexpected mask would show there too.
+
 ### Drag-out mechanics — built and verified
 
 Confirmed working by use: dragging a row out delivers the file to the destination,
@@ -977,6 +1114,14 @@ the fastest way to inspect what a player is publishing:
 | 8 | ~~Paste confirmation: a toast under the island saying what the click did~~ **done, verified by use** | — |
 | 9 | ~~One music-panel size; the tile follows the artwork's aspect so a thumbnail is not cropped~~ **done, verified with a live session** | — |
 | 10 | ~~View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader`~~ **done, pixel-verified** (§13) | — |
+| 11 | ~~Reopen on the last panel; Default Panel gains *Last Used*~~ **done** | — |
+| 12 | ~~True-black surface; the flared top corners removed~~ **done, confirmed by use** | — |
+| 13 | ~~`IslandMetrics`: one 12 pt padding, concentric corners, notch-following heights, symmetric chin, larger transport~~ **done, pixel-measured, confirmed by use** | — |
+| 14 | ~~Switcher icons at menu-bar size (14 pt medium)~~ **done, measured** | — |
+| 15 | ~~100 pt drag reach; `FileDropView` over the whole island; the Dock-stack layers and safety net~~ | **Finder works; Dock stack unverified** (§5) |
+| 16 | ~~`⌃⌘V` keyboard selection; shortcut presets; the same machinery for the terminal list~~ | built; needs a run on the machine |
+| 17 | ~~Settings panel; optional clean layout~~ **built, render-verified** | confirm in use |
+| 18 | ~~Merge and reconcile: one `HistoryPanel` for both lists, one collapse guard, one safe open path~~ **done — §15** | — |
 
 Phases 1–5.6 are complete. The panel shell did turn each feature into a provider
 plus a view: the clipboard and terminal panels each landed without touching the
@@ -1070,6 +1215,21 @@ the panel shows stale commands and raises a notice strip) and
     reliable way to ask.
     The real trap was in the gate, not the monitor: see §5 for why `changeCount` is
     not a drag-start signal.
+11. **A move-only drag cannot be taken (accepted).** The shelf records a reference,
+    so a `.move` it accepted would be a promise it cannot keep, and Finder would be
+    entitled to relocate the file. Such a drag is refused instead (§5). Every real
+    source offers copy or link as well, so the cost is theoretical.
+12. **A bare-`↩` lifetime (bounded).** While the keyboard selection is on, `↩` and
+    `⎋` do not reach the frontmost app. That is the same trade Windows makes for
+    ⊞V, and it is affordable only because every exit unregisters them — which is
+    one place (`endKeyboardSelection`), reached by paste, copy, escape, collapse,
+    outside click, app switch and a panel with no list. If that ever gains a second
+    owner, this becomes a bug that steals Return from every app.
+13. **Merging a parallel branch over shared raw values (resolved, 15 Nov).** `Slot`
+    is one raw-value namespace for all three registration groups, and two branches
+    had inserted into it at different offsets, so a textual resolution would have
+    produced duplicate hotkey ids. Swift rejects duplicate raw values, so it fails
+    loudly, but the merge renumbered the whole enum by hand (§15).
 
 ### Accepted rough edges
 
@@ -1379,11 +1539,11 @@ One line per file, so a reviewer can go straight to the part they care about.
 | File | Responsibility |
 | --- | --- |
 | `App.swift` | Entry point, single-instance `flock`, no-notch guard, status item, headless preview renderer, `applicationWillTerminate` |
-| `IslandController.swift` | The `NSPanel`, window geometry (grow to `max(old,new)`, settle), global event monitors, drag detector, collapse timing, mouse policy |
-| `IslandModel.swift` | All state: panel selection, geometry, paste delivery, `PlayerService` (sources, polling, toast). The only `ObservableObject` the views observe besides the services |
-| `IslandView.swift` | `IslandRootView`, `NotchShape`, the four panels, the toast, the chips/pills/picker views |
-| `Panels.swift` | `PanelID` (sizes, symbols, order), `PanelProvider` protocol, `PanelHost` lifecycle, the four providers |
-| `HotKeys.swift` | Carbon `RegisterEventHotKey`: `⌃⌥↓` toggle (process lifetime), `⌥1–4` + `⌃⌥←/→` + `⌥Tab` (only while expanded) |
+| `IslandController.swift` | The `NSPanel`, window geometry (grow to `max(old,new)`, settle), global event monitors, drag detector, the shared "open without the pointer" path, collapse timing (the single authority), mouse policy |
+| `IslandModel.swift` | All state: panel selection, last-panel preference, geometry, keyboard selection, paste delivery, `PlayerService` (sources, polling, toast). The only `ObservableObject` the views observe besides the services |
+| `IslandView.swift` | `IslandRootView`, `NotchShape`, `IslandMetrics`, the shell, the shelf/music/settings panels, the toast, the chips/pills/picker views, `AgeView` |
+| `Panels.swift` | `PanelID` (sizes, symbols, order, `contentPanels`), `PanelProvider` protocol, `PanelHost` lifecycle, the five providers |
+| `HotKeys.swift` | Carbon `RegisterEventHotKey`, three groups: `⌃⌥↓` + clipboard shortcut (process lifetime), `⌥1–5` + `⌃⌥←/→` + `⌥Tab` (while expanded), `↩`/`⌥↩`/`⎋` (while a row is selected). `ClipboardShortcut` presets |
 | `FullscreenSupport.swift` | SkyLight space attach so the island survives fullscreen Spaces |
 | `SpotlightState.swift` | Is Spotlight open — drives suppression |
 
@@ -1395,7 +1555,7 @@ One line per file, so a reviewer can go straight to the part they care about.
 | `MediaRemote.swift` | dlsym bridge for **commands only** (play/pause/next/seek); reading is dead on macOS 15.4+ |
 | `MediaStream.swift` | Spawns `/usr/bin/perl` with the vendored adapter, reads JSON lines, restarts on death, sweeps orphans by pid file |
 | `MediaStreamDecoder.swift` | JSON line → `NowPlaying`, including the patch rule (title-less payloads merge into the current track) |
-| `MusicLayout.swift` | The music panel's one size (520 × 190) and the aspect-fitted tile |
+| `MusicLayout.swift` | The music panel's width, its notch-parameterised height, and the aspect-fitted tile |
 | `CoreAnimationEqualizer.swift` | The chin's three bars, as `CALayer` animations the window server interpolates |
 
 ### Panels
@@ -1409,6 +1569,8 @@ One line per file, so a reviewer can go straight to the part they care about.
 | `ShelfStore.swift` | File references (path + plain bookmark), dedupe, 30-entry cap, load-time pruning |
 | `IgnoreRules.swift` | The manual trivia deny-list (`ignore-rules.txt`) |
 | `PanelChrome.swift` | Section header, empty state, `FrequentChip`, `HistoryRow` — shared by three panels |
+| `HistoryPanel.swift` | `HistoryList` and `HistoryPanel`: the clipboard and terminal lists drawn once, plus the two adapters that say where they differ |
+| `FileDropView.swift` | The window's content view as drop target: whole-island reach, the operation contract (never move), file URLs read at the drop |
 | `HistoryWindow.swift` | `24h / 7d / 30d / All` as a pure filter, with the untimestamped rule |
 | `AccessibilityPaster.swift` | Posts the synthetic ⌘V, and asks for the grant once per launch |
 | `AppSupport.swift` | The Application Support directory, and the `ISLAND_DATA_DIR` sandbox |
@@ -1421,3 +1583,114 @@ One line per file, so a reviewer can go straight to the part they care about.
 | `build.sh` | Target arch from `uname -m`, identity resolution, `swiftc`, compiles the vendored framework with `clang`, signs framework-then-bundle, installs to `~/Applications` and registers it |
 | `Info.plist` | `dev.island`, `LSUIElement` (no Dock icon), AppleEvents usage string |
 | `vendor/mediaremote-adapter/` | BSD-3 source, compiled at build time; licence ships in `Contents/Resources` |
+
+---
+
+## 15. Second pass and the merge (15 Nov)
+
+Two branches grew from the same commit. `master` reworked the shortcuts and the
+README; `Kami` added the keyboard picker, the settings panel, the metrics refactor,
+the whole-island drop target and the last-panel preference. This is what merging
+them settled, and why. Where this section and `MERGE-KAMI.md` disagree, this one is
+the record: two of that document's recommendations were wrong and are corrected in
+*Two corrections*.
+
+### What the merge cost
+
+| | |
+| --- | --- |
+| `origin/Kami` | one commit on `56d7f83` — the parent `master` was on *before* the shortcut change |
+| Divergence | 11 files, +1622 / −406 |
+| Conflicted | `PLAN.md`, `README.md`, `Sources/HotKeys.swift` (9 regions), `Sources/IslandController.swift` (1) |
+
+Kami was not a feature branch on top of `master`; it was a parallel branch carrying
+the **pre-shortcut** copies of the files `master` had rewritten, which is why the
+hotkey file collided at all. `App.swift` auto-merged *and* correctly: `Collapse
+Island` and `toggle()` stayed gone while the clipboard submenu and `contentPanels`
+came through.
+
+Both docs were rebuilt from `master`'s side rather than hand-merged. `README.md` had
+been rewritten around two recordings, so a textual merge was all loss; Kami's
+content was ported into it instead.
+
+### Three things a clean text merge would have got wrong
+
+**1. Two collapse guards, each blind to the other.** `master`'s `pinnedOpen` stopped
+a collapse being *scheduled* (an early return in `handleMouse`); Kami's
+`pickerActive` stopped a scheduled collapse *firing* (a guard in `scheduleCollapse`).
+Merged as written, a pinned island survived only because `handleMouse` happened to
+return before reaching the timer. The timer is now the single authority —
+`!locksOpen && !isInteracting && !pinnedOpen && !keyboardSelectionActive` — and
+`pinnedOpen` lives in the model so the guard can read it. The two flags stay separate
+concepts: one means the pointer did not ask for this, the other means a row list owns
+the pointer-adjacent keys.
+
+**2. Kami's `openPicker()` bypassed the open path.** It did the `suppressed` clear,
+the fullscreen attach and the `orderFrontRegardless` inline — the same work as
+`expandWithoutPointer()`, written twice — and it set `expanded = true` directly to
+avoid `expand()`'s rewrite of `activePanel`. Unifying them has an ordering trap:
+`expand()` sets `activePanel`, so the panel to restore has to be captured **before**
+expanding, and the target panel selected **after**. `toggleKeyboardSelection()` is
+now: capture, expand, select.
+
+`expandWithoutPointer()` also gained an early return while Spotlight is open. It did
+not have one, and it needed it: `expand()` is blocked by `suppressed` while the
+`orderFrontRegardless()` below it is not, so a Spotlight-open menu click could leave
+an invisible panel in front.
+
+**3. The clipboard shortcut's menu label.** Kami's `clipboardShortcutAvailable` — and
+the "in use by another app" text built on it — rested on `RegisterEventHotKey`
+returning an error for a taken chord. It does not (§2), so the state was removed
+rather than shipped. Settings and the menu show which preset is chosen and nothing
+about whether it is free; a Carbon error is logged.
+
+### Two corrections to `MERGE-KAMI.md`
+
+- It says the panel index mapping "must use `contentPanels`, not `allCases`". Wrong:
+  `allCases` is what makes `⌥5` reach Settings. `contentPanels` is only for "which
+  panel does hover reopen on", where Settings must not appear.
+- It recommends unifying `togglePicker()` with `expandWithoutPointer()`. Done, but
+  not the way it describes: `expand()` rewrites `activePanel` before `openPicker()`
+  would have saved the panel to restore, so the capture has to come first.
+
+### The list refactor
+
+`ClipboardPanel` and `TerminalPanel` were 107 and 90 lines that differed in three
+places. `PanelChrome` had already extracted the header, empty state, chip and row and
+stopped short of the list; `HistoryPanel` finishes it. `HistoryList` is the shape
+both services already had, and the two adapters live next to the view so no service
+learns about SwiftUI.
+
+The selection became `ListSelection { panel, id }` — the id, not the index, because
+both lists change underneath it: a new copy arrives at row 0, zsh appends a command,
+and an index would silently move the highlight onto another row. One switch,
+`paste(panel:rowID:autoPaste:)`, is the only place the two lists still differ in the
+paste path, because a clipboard row bumps frecency and a command must not land in
+clipboard history.
+
+### Measured, inferred, unverified
+
+Kept apart deliberately, because the earlier draft of this document ran them
+together.
+
+| Claim | Status |
+| --- | --- |
+| `RegisterEventHotKey` returns `noErr` for a taken chord and for system chords | **measured**, five cases (§2) |
+| A warning keyed on registration status can never fire | **follows from the measurement** |
+| A taken chord fails at delivery | **inferred** — the probe received no hotkey at all, including an unclaimed control |
+| A passive `CGEventTap` would win the chord | **inferred**, untested |
+| The one "shortcut does nothing" report was contention | **false** — it was `⌥↓` without `⌃` |
+| Finder drops work, including drag-out | **verified** |
+| Dock Downloads-stack drops work | **unverified** (§5) |
+| Music and Settings heights at 37.5 pt | **computed** from the formula; the music one was confirmed on the second machine, the settings one has not been seen |
+
+### How this pass was checked
+
+`swiftc -typecheck -parse-as-library -swift-version 5 -target
+arm64-apple-macos26.0 -framework AppKit -framework SwiftUI Sources/*.swift` after
+each commit. That is the whole of it: nothing in this pass has been run on a notched
+display, so everything in *Using it* about the keyboard selection is design intent
+until it is. The verification list is in `README.md`'s own terms: `⌃⌥↓` from another
+app, `⌥1`–`⌥5`, both cycle methods only while expanded, `⌃⌘V` while closed, focus
+staying in the original app, every exit unregistering `↩`/`⎋`, a mid-selection copy
+not moving the highlight, and a move-only drag being refused.

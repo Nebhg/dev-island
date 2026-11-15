@@ -1,9 +1,9 @@
 # Dev Island
 
 A personal dev toolbox that lives in the MacBook notch. Clipboard history, shell
-history, a file shelf and now-playing controls share one panel that drops out of the
-cutout on hover — plus a now-playing chin and a paste confirmation that appear while
-the island is closed.
+history, a file shelf, now-playing controls and a settings panel share one panel that
+drops out of the cutout on hover — plus a now-playing chin and a paste confirmation
+that appear while the island is closed.
 
 ![Clicking a clipboard row pastes it into the app you came from](docs/autopaste.gif)
 
@@ -14,36 +14,61 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
 
 ## What it does
 
-| Panel | What it holds |
-| --- | --- |
-| **Clipboard** | Copy history with frecency chips, ages and kinds. Click a row to paste it into whatever had focus |
-| **Terminal** | `~/.zsh_history`, trivia filtered, with a `24h / 7d / 30d / All` window |
-| **Shelf** | File references dropped on the closed notch. Drag them back out to move them |
-| **Music** | Artwork, scrub and transport for whatever the system calls "now playing" |
+| Panel | Size | What it holds |
+| --- | --- | --- |
+| **Clipboard** | 520 × 320 | Copy history with frecency chips, ages and kinds. Click a row to paste it into whatever had focus |
+| **Terminal** | 520 × 320 | `~/.zsh_history`, trivia filtered, with a `24h / 7d / 30d / All` window |
+| **Shelf** | 440 × 106–260 | File references dropped on the island. Drag them back out to move them |
+| **Music** | 520 × 188\* | Artwork, scrub and transport for whatever the system calls "now playing" |
+| **Settings** | 520 × 265\* | Every setting, one row each |
 
-![The four panels in use](docs/panel-tour.gif)
+\* On a 32 pt notch. Music and Settings grow with a taller one — 193.5 pt and
+270.5 pt on a 37.5 pt notch — so the padding under the content stays even.
+
+![The four content panels in use](docs/panel-tour.gif)
 
 *Clipboard → Terminal → Shelf → Music, on `⌃⌥→`.*
 
 ## Using it
 
-- **Open** by hovering the notch; it closes shortly after the pointer leaves.
+- **Open** by hovering the notch; it closes shortly after the pointer leaves. It
+  reopens on whichever panel you left it on, unless a fixed default is picked.
 - **Open from the keyboard** with `⌃⌥↓`, which toggles the island open or closed.
-- **Switch panels** with the icons either side of the cutout, `⌥1`–`⌥4`, or
-  `⌃⌥←` / `⌃⌥→` to cycle (also `⌥Tab` / `⌥⇧Tab`). The panel shortcuts only exist
-  while the island is open; the open key is always armed.
+- **Switch panels** with the icons either side of the cutout, `⌥1`–`⌥5`, or
+  `⌃⌥←` / `⌃⌥→` to cycle (also `⌥Tab` / `⌥⇧Tab`). The panel and cycle keys only
+  exist while the island is open; the open key and the clipboard shortcut are armed
+  all the time.
+- **Paste from history with `⌃⌘V`**, like ⊞V on Windows: the island opens on the
+  clipboard without the pointer, `⌃⌥←` / `⌃⌥→` choose a row, `⌥1`–`⌥5` switch to
+  another list and start at its first row, `↩` pastes into the app you were in,
+  `⌥↩` only copies, and `⎋`, a click elsewhere or switching apps ends it. The
+  terminal list is the same machinery, so a command costs no second shortcut:
+  `⌃⌘V`, then `⌥2`. Change the shortcut or switch it off in Settings or under
+  **Clipboard Shortcut** in the menu bar capsule. `↩` and `⎋` are the only chords
+  here with no modifier, and they are only taken while that mode is on.
 - **Click a row** to paste into whatever had focus, or copy. `⌥`-click always
   copies. The **Autopaste** pill toggles the default and is remembered; either way
   a short toast says what happened — `Auto-pasted` or `Copied to clipboard`.
-- **Drag a file at the closed notch** to put it on the shelf; drag it out again to
-  move it where it belongs. The shelf holds references, so removing a row never
-  touches the real file.
+- **Time windows** — `24h / 7d / 30d / All` on both history panels. A filter, not
+  retention: choosing 24h hides rows and deletes nothing.
+- **Drag a file towards the notch** to put it on the shelf. The island opens once
+  the file is within about 100 pt and takes the drop anywhere on it, not only over
+  the shelf. Drag it out again to move it where it belongs. The shelf holds
+  references, so removing a row never touches the real file — and a drag that
+  offers nothing but a move is refused rather than answered with a move that will
+  not happen. Verified with Finder drags; a Dock stack such as Downloads carries
+  the same pasteboard types and goes through the same path, but that is unverified.
+- **Settings** is the gear panel (`⌥5`): Clean layout, Autopaste, the clipboard
+  shortcut, both history windows, and which panel hover opens on (Last used, or
+  always one). **Clean layout** hides the history panels' filters and Frequent row,
+  leaving just the lists; it is off by default. The menu bar capsule has Default
+  Panel, Clipboard Shortcut and Clean Layout too.
 - **Quit** from the capsule in the menu bar. There is deliberately no login item.
 
-The panel and cycle keys are tied to the island being open; only the open key is
-armed all the time. Why the shortcuts sit on `⌃⌥` and `⌥` rather than `⌘1`–`⌘4` is
+Why the shortcuts sit on `⌃⌥` and `⌥` rather than `⌘1`–`⌘5` or `⌥⌘1`–`⌥⌘5` is
 recorded in `PLAN.md` §2 ("Navigation"): macOS and most apps claim ⌘-number and
-⌃-number before a Carbon hotkey is consulted, so those never arrive.
+⌃-number first, and those win before a Carbon hotkey is consulted, so the shortcut
+would silently never arrive.
 
 ## Requirements
 
@@ -134,6 +159,8 @@ reading is gated.
 | Auto-paste only copies | Accessibility grant missing for this build. Re-grant after an ad-hoc rebuild, or use a stable identity |
 | Terminal panel is empty or stale | The two `setopt` lines above, then open a **new** terminal window |
 | Music panel empty, Spotify is playing | Automation permission for Spotify |
+| The clipboard shortcut does nothing | Another app may hold that chord. macOS does not report it — registration succeeds either way — so pick another preset under **Clipboard Shortcut** |
+| A dragged file will not drop | Run with `ISLAND_DRAG_PROBE=1`: it logs the operations the source allows and what the island chose. A drag that offers only move is refused on purpose; every other source is taken |
 | Nothing at all | Run it from Terminal to see stderr: `./DevIsland.app/Contents/MacOS/DevIsland` |
 | Two media helpers / odd duplicates | Relaunch; the app sweeps a stale helper at startup by pid file |
 
