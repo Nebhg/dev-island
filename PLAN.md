@@ -1,11 +1,12 @@
 # Dev Island — multi-panel plan
 
-Status: **complete.** Phases 0a and 1–10 are implemented and verified by use;
-0b is the only unrun check (whether *reading* the pasteboard makes macOS prompt —
-no prompt has ever appeared, so it is close to answered by observation). §1 states
-facts verified against the source; §13 records the code review; §11 records signing
-and installation. The three accepted rough edges in §9 are deliberate, not
-outstanding.
+Status: **complete, apart from what needs a notched display to confirm.** Phases 0a
+and 1–18 are implemented; 0b is the only unrun check (whether *reading* the
+pasteboard makes macOS prompt — no prompt has ever appeared, so it is close to
+answered by observation), and §15 says exactly which of the newer claims have been
+measured and which have not. §1 states facts verified against the source; §13
+records the code review; §11 records signing and installation. The accepted rough
+edges in §9 are deliberate, not outstanding.
 
 | Phase | State |
 | --- | --- |
@@ -24,11 +25,17 @@ outstanding.
 | 8 — paste confirmation | **done, verified** |
 | 9 — one music-panel size, aspect-fitted tile | done, verified live |
 | 10 — view dedup (review 1B) | **done, pixel-verified** |
+| 11–14 — last panel, true black, metrics, icon size | done, confirmed by use |
+| 15 — whole-island drop target | **Finder verified; Dock stack unverified** |
+| 16 — keyboard selection, for both lists | built; needs a run on the machine |
+| 17 — settings panel, clean layout | built, render-verified |
+| 18 — merge with the parallel branch (§15) | done |
 
 Goal: turn a single-purpose music notch into a panel host with a clipboard
-history panel, a terminal-history panel, and a file shelf, plus a visual upgrade to
-the music panel. All four are built, and media is no longer Spotify-only: a browser
-playing YouTube shows its title, channel, position and thumbnail (§7).
+history panel, a terminal-history panel, a file shelf, a settings panel and a
+visual upgrade to the music panel. All of them are built, and media is no longer
+Spotify-only: a browser playing YouTube shows its title, channel, position and
+thumbnail (§7).
 
 ---
 
@@ -197,7 +204,7 @@ Active at full white, inactive at 0.3. This replaced a bottom nav row, which cos
 ~22 pt of content height on every panel and put the switcher where the eye is not.
 
 The icons are **anchored to the cutout**, not centred in the side band. Panels
-differ in width, so centring would slide all four icons sideways on every switch.
+differ in width, so centring would slide all five icons sideways on every switch.
 The band is measured from `activePanel.preferredSize`, not from the window, so the
 icons stay put even while the window is still the larger of the two sizes.
 

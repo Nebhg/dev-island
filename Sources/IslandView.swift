@@ -261,7 +261,7 @@ struct PanelBar: View {
     var body: some View {
         HStack(spacing: 0) {
             // Anchored to the cutout rather than centred in the side band: the
-            // panels differ in width, and centring would slide all four icons
+            // panels differ in width, and centring would slide all five icons
             // sideways every time you switch to a wider or narrower one.
             group(PanelID.leftPanels)
                 .frame(width: sideWidth, alignment: .trailing)
