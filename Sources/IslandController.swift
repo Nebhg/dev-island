@@ -191,12 +191,9 @@ final class IslandController {
             }
             .store(in: &cancellables)
 
-        // The shelf's height follows how many files are in it, so adding or
-        // removing one has to resize the window the same way a panel switch does.
-        model.shelf.$items
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.updateGeometry() }
-            .store(in: &cancellables)
+        // The shelf's height follows how many files are in it. `IslandModel` owns
+        // that subscription and calls back through `onGeometryChange`, so this is
+        // the only place the resize is triggered from.
 
         // The window must be grown before SwiftUI renders the first frame of the
         // shape animation, so this runs synchronously from the model's setters
@@ -301,7 +298,7 @@ final class IslandController {
             settleWork = nil
             return
         }
-        scheduleSettle(to: target, on: screen)
+        scheduleSettle(to: target)
     }
 
     /// Shrinks the window back to the island once the shape has finished animating.
@@ -312,7 +309,7 @@ final class IslandController {
     /// beside every smaller one. The delay is a little past the spring's response so
     /// it cannot fire mid-flight and clip the last few frames; the area it removes
     /// is transparent either way.
-    private func scheduleSettle(to target: CGSize, on screen: NSScreen) {
+    private func scheduleSettle(to target: CGSize) {
         settleWork?.cancel()
 
         // While the window is larger than a collapsing island it covers live
@@ -326,6 +323,9 @@ final class IslandController {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.settleWork = nil
+            // Resolved here, not captured: a display change during the settle
+            // would otherwise apply the old screen's geometry.
+            guard let screen = self.targetScreen() else { return }
             self.applyWindowSize(target, on: screen)
             self.refreshMousePolicy()
         }
@@ -584,10 +584,18 @@ final class IslandController {
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
+            // Any pending settle was computed against the old screens.
+            self.settleWork?.cancel()
+            self.settleWork = nil
+
             // A display change can take the notch away — lid closed, or an
-            // external display becoming main. Hide rather than leave the panel
-            // stranded at the previous screen's geometry.
+            // external display becoming main. Collapse rather than only hiding:
+            // leaving `expanded` true kept the Spotlight watch and the player poll
+            // running against an invisible window, which is the one rule this app
+            // does not break, and made the island reappear open when the notch came
+            // back.
             guard NSScreen.screens.contains(where: { $0.notchRect != nil }) else {
+                self.model.collapse()
                 self.panel.orderOut(nil)
                 return
             }

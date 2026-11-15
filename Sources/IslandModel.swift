@@ -75,6 +75,23 @@ final class IslandModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] track in self?.nowPlaying = track }
             .store(in: &cancellables)
+
+        // The shelf is the only panel whose size comes from data rather than a
+        // constant, so a change in item count has to do two things the plain
+        // property observers cannot: invalidate this object, so SwiftUI
+        // re-evaluates `islandSize` and the shape animates to the new height, and
+        // ask for the window resize. Without the first, the window grew but the
+        // shape did not, and the newly added row was clipped until something else
+        // happened to re-render.
+        shelf.$items
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.objectWillChange.send()
+                self.onGeometryChange?()
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Geometry
