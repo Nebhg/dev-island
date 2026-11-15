@@ -1,14 +1,14 @@
 # Dev Island — multi-panel plan
 
-Status: **Phases 1–5.6 implemented and verified by use; 0a/0b not run; 7–8
-pending.** Phase 0 is the only gap that can change the design — the
-YouTube/Chrome test can delete Phase 6, and 0b is a macOS behaviour nobody has
-checked. §1 states facts verified against the source; §13 tracks the code review.
-§11 records the signing setup that is in place.
+Status: **Phases 1–6 implemented and verified by use, browser media included;
+7–10 pending.** 0a is answered (it works), 0b — whether *reading* the pasteboard
+raises a macOS banner — is still unchecked and is the only unknown left in the
+happy path. §1 states facts verified against the source; §13 tracks the code
+review; §11 records signing and installation.
 
 | Phase | State |
 | --- | --- |
-| 0a — YouTube/Chrome media | not run (**next**) |
+| 0a — YouTube/Chrome media | **done, verified by use** |
 | 0b — macOS pasteboard read banner | not run |
 | 1 — panel host | done |
 | 1.5 — rename + self-signed signing | done |
@@ -18,9 +18,11 @@ checked. §1 states facts verified against the source; §13 tracks the code revi
 | 5 — music visual upgrade | done |
 | 5.5 — strip removed, per-panel sizes, resize rework | done |
 | 5.6 — history windows, `EXTENDED_HISTORY`, sandbox | done, verified against invented data |
-| 6 — media transport (§7) | done; browser session unverified |
-| 7 — paste confirmation | pending |
-| 8 — view dedup (review 1B) | pending |
+| 6 — media transport (§7) | done, verified with a browser |
+| 7 — browser artwork in a title-less diff | pending |
+| 8 — paste confirmation | pending |
+| 9 — video placeholder glyph | pending, maybe unnecessary |
+| 10 — view dedup (review 1B) | pending |
 
 Goal: turn a single-purpose music notch into a panel host with a clipboard
 history panel, a terminal-history panel, and a file shelf, plus a visual
@@ -324,7 +326,7 @@ click row
   editor.
 - ⌥-click = copy only, no keystroke. Plain click = copy + paste.
 
-### Paste confirmation (planned — Phase 7)
+### Paste confirmation (planned — Phase 8)
 
 Auto-paste works but is **invisible**: the island collapses, ⌘V fires, and the
 only evidence is that text appears in the app you were already looking at. Click a
@@ -394,16 +396,21 @@ untested fallback would have been dead code pretending to be insurance.
 - **Never test TCC from a terminal launch.** It reports the terminal's grant, not
   the app's. Use `open --env … -a "Dev Island"` if the panel needs to be open, or
   launch it from Spotlight.
-- The app asks once per launch (`AXIsProcessTrustedWithOptions` with the prompt
-  option) and the notice strip is a **button** that opens
-  Privacy & Security → Accessibility. The notice is computed from the live grant,
-  not a cached value, so granting clears it on the next panel open.
+- **First run prompts, and the prompt worked.** `AXIsProcessTrustedWithOptions`
+  with the prompt option is called once at launch, so a new install gets the
+  system dialog before it is ever needed rather than after the first dead paste.
+  Verified on this machine: the dialog appeared, the grant was enabled, auto-paste
+  began working with no relaunch.
+- The notice strip is a **button** that opens Privacy & Security → Accessibility,
+  for anyone who dismissed the dialog. Computed from the live grant, so granting
+  clears it on the next panel open.
 - `postPaste()` is not gated on the check: with no grant the event is dropped
   anyway, so attempting costs nothing.
-- **Auto-paste has a toggle** (the bolt in both history headers, persisted in
-  `UserDefaults`, on by default). Off means copy-only, the same result as ⌥-click,
-  which keeps working either way. No warning is shown when it is off — copy-only is
-  then what was asked for.
+- **Auto-paste has a toggle** — a pill reading `Autopaste On` / `Autopaste Off` in
+  both history headers, persisted, on by default. Named for the setting rather than
+  the outcome: "Paste / Copy" read as an action button instead of a switch. Off
+  means copy-only, the same result as ⌥-click, which keeps working either way, and
+  no notice is shown while it is off.
 
 ---
 
@@ -779,52 +786,57 @@ Not proposed: tap-artwork-to-flip. No value, extra state.
 
 ## 7. Browser / YouTube media
 
-**Original hypothesis, now disproved: `MediaRemote` returns nothing at all on this
-macOS.** The plan assumed YouTube's Media Session would reach the island for free
-because Chrome forwards it to the system now-playing session that `MediaRemote`
-reads. It does not, and the reason has nothing to do with Chrome.
+**Verified working, 15 Nov.** A YouTube video playing in Microsoft Edge appears in
+the island with its title, channel, duration and position. The path is:
 
-*Measured 15 Nov, macOS 26:* `MRMediaRemoteGetNowPlayingInfo` returns an **empty
-dictionary** — 8 consecutive polls, `keys=0`, with Spotify both paused and
-playing. Every track the island has ever shown came from the Spotify AppleScript
-bridge, which is why this went unnoticed: the Spotify path wins whenever Spotify is
-running, and MediaRemote was never exercised.
+```
+Edge → system now-playing session → vendored helper (perl) → MediaStream → NowPlaying
+```
 
-This is the documented macOS 15.4+ behaviour. MediaRemote now requires an
-**entitled** process, which a normal app is not, and the community adapter that
-works around it does so by loading a helper dylib inside `/usr/bin/perl`, using
-perl's entitlement. Not an accident of this codebase.
+What the session actually carries, read from the helper:
 
-Consequences:
+```
+bundleIdentifier:     com.microsoft.edgemac
+title:                This Is Dead By Daylight Late At Night 28
+artist:               Skermz              ← the channel
+duration:             912.281     elapsedTime: 144.383827
+artworkData:          base64 JPEG, ~16 KB
+artworkMimeType:      image/jpeg
+playing:              False
+```
 
-- **0a cannot pass with the current transport.** A browser will look identical to
-  Spotify-paused: nothing. The entitlement check is on the *caller*, not the
-  *source*, so this is not a test that needs re-running with a video playing.
-- **There is no artwork URL to fetch.** The schema has `ArtworkData`,
-  `ArtworkDataWidth`, `ArtworkDataHeight` and `ArtworkMIMEType` — no
-  `ArtworkURL`. The thumbnail is whatever the playing app hands over as bytes; it
-  cannot be chosen or downloaded by us.
-- **Artwork arrives late when it arrives at all**, which is why `NowPlaying`
-  has a `carryingArtwork(from:)` rule: a poll that comes back without the image
-  must not erase the one already on screen. That rule is currently **inert**,
-  because nothing ever reaches it — it exists for whatever fixes the transport.
+So the browser publishes the **thumbnail**, and general YouTube videos work — not
+just YouTube Music. That was the whole point of preferring this route over a
+per-site integration.
 
-The original manual test, kept for when a transport exists:
+### Two things this settled
 
-1. Play a YouTube video in Chrome, background it
-2. Hover the notch — does the title appear?
-3. Press pause from the island — does the video stop?
+**There is no artwork URL, only bytes.** The schema has `ArtworkData`,
+`ArtworkDataWidth`, `ArtworkDataHeight` and `ArtworkMIMEType` — no `ArtworkURL`.
+The thumbnail is whatever the playing app hands over; it cannot be chosen or
+downloaded by us. Which is why an earlier idea — fetch the thumbnail ourselves —
+was never possible.
 
-If it does not, fallback is AppleScript `do JavaScript` pausing every `<video>`
-element in Chrome/Safari. This satisfies "pause the tab I'm not looking at" but
-requires Develop → *Allow JavaScript from Apple Events* **and** Automation
-permission. Per-tab targeting needs tab enumeration — doable, considerably
-uglier. Build only if step 2 fails.
+**The old transport was dead, and it hid behind Spotify.** `MediaRemote` returns an
+empty dictionary to an unentitled caller (measured: 8 polls, `keys=0`), so a
+browser looked identical to Spotify-paused: nothing. Every track the island had
+shown came from the Spotify AppleScript bridge, which wins whenever Spotify runs —
+so the direct path was never exercised.
 
-Note: `PlayerService.refresh()` (`Sources/IslandModel.swift`) currently prefers
-Spotify whenever it is running, falling back to MediaRemote. With a browser
-playing and Spotify merely *running but paused*, this ordering is worth
-re-checking — it may mask the browser session.
+### Outstanding: artwork arriving after the metadata
+
+The thumbnail shows in the panel (verified), but it can be **missed** when it
+arrives as its own update. `MediaStream.decode` requires a `title`, and a diff
+payload that only adds `artworkData` has none, so the update is dropped and the
+placeholder stays. That is the likely cause of "title appears, artwork does not".
+
+Fix shape: keep the last decoded track and, for a payload with no title but with
+artwork, attach the image to it rather than discarding the line.
+
+**Fallback if a session genuinely has no artwork:** the gradient placeholder
+currently draws a music note. A video/play glyph reads better for a browser
+session, and `bundleIdentifier` / `mediaType` are both available to choose with.
+Deferred until the diff bug above is fixed — it may not be needed at all.
 
 ### The transport, as built
 
@@ -854,14 +866,13 @@ was never gated, only reading.
 Precedence is unchanged: Spotify's AppleScript bridge wins whenever it is actually
 playing, and the stream covers everything else — a browser, Music, VLC.
 
-**Still unverified: a browser session.** Nothing here proves Chrome publishes
-`artworkData`, only that the transport now delivers whatever it publishes. The test
-is one command while a video plays:
+**Verified against a real browser session** — see the top of this section. Chrome
+and Edge both surface through the same session; the helper's own `get` command is
+the fastest way to inspect what a player is publishing:
 
 ```
 /usr/bin/perl DevIsland.app/Contents/Resources/mediaremote-adapter.pl \
-  "$PWD/DevIsland.app/Contents/Frameworks/MediaRemoteAdapter.framework" \
-  stream --no-diff --no-artwork
+  "$PWD/DevIsland.app/Contents/Frameworks/MediaRemoteAdapter.framework" get
 ```
 
 ---
@@ -870,7 +881,7 @@ is one command while a video plays:
 
 | Phase | Work | Effort |
 | --- | --- | --- |
-| 0a | Test YouTube/Chrome against the island (§7) | **answered: transport is dead** — MediaRemote returns zero keys, so this needs a decision, not a test |
+| 0a | Test YouTube/Chrome against the island (§7) | **done, works** — title, channel, duration, position, thumbnail |
 | 0b | Does *reading* the pasteboard trigger a macOS "pasted from" banner? (Distinct from the in-app paste confirmation in §3) | not run |
 | 1 | ~~Panel shell: `PanelID`, provider protocol, registry, window resizing, icon nav, default panel~~ **done** | — |
 | 1.5 | ~~Rename to `dev.island` + `NSAppleEventsUsageDescription`; self-signed cert; `build.sh` signing; verify grants survive a rebuild~~ **done** | — |
@@ -880,9 +891,11 @@ is one command while a video plays:
 | 5 | ~~Music visuals: black glass, 132 pt artwork, white transport circle~~ **done** | — |
 | 5.5 | ~~Remove the now-playing strip, per-panel sizes, window resized at endpoints only~~ **done** | — |
 | 5.6 | ~~`24h / 7d / 30d / All` windows on both history panels; `EXTENDED_HISTORY`; `ISLAND_DATA_DIR` sandbox~~ **done, verified against invented data** | — |
-| 6 | ~~Media transport: vendored `mediaremote-adapter` built from source, streamed through `MediaStream`~~ **done** — browser session itself still unverified, §7 | — |
-| 7 | Paste confirmation in the closed notch, toggleable from the clipboard header (§3) | ~1 hour |
-| 8 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
+| 6 | ~~Media transport: vendored `mediaremote-adapter` built from source, streamed through `MediaStream`~~ **done and verified with a real browser session** | — |
+| 7 | Artwork arriving in a title-less diff is dropped, so a browser thumbnail can be missed (§7) | ~30 min |
+| 8 | Paste confirmation in the closed notch, toggleable from the clipboard header (§3) | ~1 hour |
+| 9 | Video placeholder glyph for sessions with no artwork — only if 7 leaves gaps (§7) | ~30 min, maybe unnecessary |
+| 10 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
 
 Phases 1–5.6 are complete. The panel shell did turn each feature into a provider
 plus a view: the clipboard and terminal panels each landed without touching the
@@ -916,14 +929,18 @@ the panel shows stale commands and raises a notice strip) and
 5. **Reading pasteboard contents may show a macOS paste notice (unverified).**
    This is check 0b and it has never been run deliberately. No notice has been
    observed while capturing, but that is absence of evidence rather than a check.
-   Distinct from the **in-app** paste confirmation in §3/Phase 7 — that one is
+   Distinct from the **in-app** paste confirmation in §3/Phase 8 — that one is
    ours and is being added because auto-paste is otherwise invisible.
-6. **Signing identity and TCC (resolved).** Ad-hoc signing produced a new
-   designated requirement on every build, so TCC grants dropped and auto-paste
-   failed silently. `build.sh` now signs with `Dev Island Local Signing` (§11),
-   `|| true` is gone, and the requirement was verified byte-identical across two
-   consecutive rebuilds. The certificate expires in 2036; recreating it means
-   re-issuing the Accessibility grant.
+6. **Signing identity and TCC (resolved, with a correction).** Ad-hoc signing
+   produced a new designated requirement on every build, so TCC grants dropped and
+   auto-paste failed silently. `build.sh` now signs with `Dev Island Local
+   Signing` (§11), `|| true` is gone, and the requirement was verified
+   byte-identical across two consecutive rebuilds. The certificate expires in 2036;
+   recreating it means re-issuing the Accessibility grant.
+   A stable requirement is necessary but not sufficient: the app also has to be
+   *granted*, and testing it from a terminal hid that, because a terminal-launched
+   process inherits the terminal's grant (§3). First run now prompts properly and
+   the grant is verified working.
 7. **See-through during a panel switch (fixed by construction, verified).**
    The symptom was the desktop appearing behind the island mid-switch. The window
    is now resized only at the endpoints of a transition, and always to
@@ -1011,7 +1028,7 @@ any of them can be reversed.
 - **Signing identity:** Self-signed Code Signing certificate (`Dev Island Local Signing`), not ad-hoc, so TCC Accessibility and Automation grants survive rebuilds.
 - **Clipboard capture while closed:** Accepted (`0.4 s` `changeCount` integer compare).
 - **Auto-paste is a preference, not a constant.** A pill labelled **Autopaste** with **On** or **Off** in both history headers — named for the setting rather than for the outcome, because "Paste / Copy" read as an action button rather than a state. Persisted; ⌥-click remains per-click copy-only. One setting shown on both panels.
-- **Paste confirmation lives in the closed notch, not in the panel.** The panel is gone by the time ⌘V lands, so the acknowledgement has to survive the collapse: the chin widens for ~1 s with ✓ Pasted, or "Copied" for ⌥-click. Toggleable from the clipboard header and off means off — no chin at all. Phase 7.
+- **Paste confirmation lives in the closed notch, not in the panel.** The panel is gone by the time ⌘V lands, so the acknowledgement has to survive the collapse: the chin widens for ~1 s with ✓ Pasted, or "Copied" for ⌥-click. Toggleable from the clipboard header and off means off — no chin at all. Phase 8.
 - **Testing never touches real data.** `ISLAND_DATA_DIR` redirects every store plus the instance lock, and `ISLAND_HISTORY` points the terminal panel at a fixture. The time windows were verified that way; the shell history and `clipboard.json` were confirmed untouched afterwards.
 - **History windows are a filter, never retention.** `24h / 7d / 30d / All` per panel, applied to both the list and the chips. Nothing is deleted; a shorter clipboard cap is the separate, safe lever if storage ever needs to shrink.
 - **Panel ranking:** Highlight by frecency (`uses × 0.5 ^ (days / 14)`), never filter by frequency. The only deny-list is the terminal panel's manual trivia list (§4); the clipboard panel has none, because any copied text is potentially worth pasting back.
@@ -1160,7 +1177,7 @@ re-check them the same way.
 
 | Variable | Effect |
 | --- | --- |
-| `ISLAND_EXPANDED=1` | Opens the island and sets `model.locksOpen = true`, so it stays open and can be captured |
+| `ISLAND_EXPANDED=1` | Opens the island and sets `model.locksOpen = true`, so it stays open and can be captured. **Pass it through `open --env`** when the test depends on TCC: `open --env ISLAND_EXPANDED=1 --env ISLAND_PANEL=clipboard -a "Dev Island"`. A direct `./DevIsland.app/...` launch inherits the terminal's Accessibility grant and will report permissions the app does not actually have. Under `open --env` the window behaves identically; allow a second longer for the first paint |
 | `ISLAND_PANEL=music\|clipboard\|terminal\|shelf` | Selects the panel before first paint |
 | `ISLAND_RENDER=<path>` + `ISLAND_RENDER_STATE=expanded\|playing\|wings` + `ISLAND_RENDER_PANEL=…` | Renders a static preview to PNG via `ImageRenderer` |
 | `ISLAND_DATA_DIR=<path>` | Sandboxes **every** store and the single-instance lock: clipboard history, shelf, ignore rules, `instance.lock`. Nothing under the real Application Support directory is read or written, which is how the time windows were exercised against invented data without risking real history. Also gives the test instance its own lock file, so it can run beside a real one |
@@ -1211,7 +1228,7 @@ them were already fixed when the document was read, because it was taken before
 | # | Finding | Status |
 | --- | --- | --- |
 | 1A | Application Support boilerplate in four places | **done** — `AppSupport.directory()` (`ff2505e`) |
-| 1B | Duplicated panel subviews | **pending** — Phase 8, see below |
+| 1B | Duplicated panel subviews | **pending** — Phase 10, see below |
 | 1C | Atomic JSON write duplicated in both stores | **done** — `AtomicJSON.write` (`ff2505e`) |
 | 2.1 | `PlaceholderPanel` unreachable since `ExpandedPanel` became exhaustive | **done** — deleted (`674f7e3`) |
 | 2.2 | Orphaned doc comment left mid-sentence above `NoticeStrip` | **done** — deleted (`674f7e3`) |
