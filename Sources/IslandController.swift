@@ -146,7 +146,7 @@ final class IslandController {
         hotKeys.onClipboard = { [weak self] in
             self?.toggleKeyboardSelection()
         }
-        hotKeys.onPickerKey = { [weak self] key in self?.handlePickerKey(key) }
+        hotKeys.onModeKey = { [weak self] key in self?.handleModeKey(key) }
         hotKeys.installToggle()
 
         dropView.canAccept = { [weak model] in model?.expanded == true }
@@ -234,15 +234,19 @@ final class IslandController {
             }
             .store(in: &cancellables)
 
-        // The picker's keys are global while registered, so they follow the
-        // selection directly — no hop to the next run loop turn that could leave
-        // them live after the mode has gone.
-        model.$listSelection
-            .sink { [weak self] selection in
-                if selection == nil {
-                    self?.hotKeys.uninstallPickerKeys()
+        // The mode's keys are bare, so they are global while they are installed — no
+        // hop to the next run loop turn that could leave them live after the mode has
+        // gone. Two terms rather than `keyboardMode` alone: `endKeyboardMode()` runs
+        // before `collapse()` clears `expanded`, so the first emission already
+        // unregisters, and a collapse that arrived with `expanded` already false still
+        // finds this the second, independent way to unregister.
+        model.$keyboardMode
+            .combineLatest(model.$expanded)
+            .sink { [weak self] mode, expanded in
+                if mode && expanded {
+                    self?.hotKeys.installModeKeys()
                 } else {
-                    self?.hotKeys.installPickerKeys()
+                    self?.hotKeys.uninstallModeKeys()
                 }
             }
             .store(in: &cancellables)
@@ -394,7 +398,7 @@ final class IslandController {
         model.beginKeyboardMode(on: .clipboard)
     }
 
-    private func handlePickerKey(_ key: HotKeys.PickerKey) {
+    private func handleModeKey(_ key: HotKeys.ModeKey) {
         switch key {
         case .paste: model.pasteSelection(copyOnly: false)
         case .copy: model.pasteSelection(copyOnly: true)

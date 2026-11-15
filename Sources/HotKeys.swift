@@ -44,21 +44,21 @@ enum ClipboardShortcut: String, CaseIterable {
 /// - **always** — `⌃⌥↓` and the clipboard shortcut. Both have to work while the
 ///   island is shut, since a closed island is exactly when they are needed.
 /// - **panel** — `⌥1`–`⌥5`, `⌃⌥←/→` and the `⌥Tab` aliases, while the island is
-///   open. Their meaning narrows when the keyboard selection is active; see
-///   `PanelKey`.
-/// - **picker** — `↩`, `⌥↩` and `⎋`, while a history row is being driven from the
+///   open. Their meaning narrows when the keyboard mode is on; see `PanelKey`.
+/// - **mode** — `↩`, `⌥↩` and `⎋`, while the island is being driven from the
 ///   keyboard. These are the only chords here with no modifier, which is why their
 ///   lifetime is tied to that mode and nothing else.
 final class HotKeys {
     /// What a panel-group chord means right now. The controller decides, because
-    /// only it knows whether a history row is selected.
+    /// only it knows whether the island is in keyboard mode.
     enum PanelKey {
         case select(Int)
         /// `⌃⌥←/→`. Cycles panels normally, moves the selected row in keyboard mode.
         case step(Int)
     }
 
-    enum PickerKey {
+    /// What a mode-group chord means. Only live while `modeKeys` is installed.
+    enum ModeKey {
         case paste
         case copy
         case close
@@ -73,11 +73,11 @@ final class HotKeys {
     /// The clipboard shortcut: opens the island on the clipboard with a row
     /// selected, or leaves that mode if it is already on.
     var onClipboard: (() -> Void)?
-    var onPickerKey: ((PickerKey) -> Void)?
+    var onModeKey: ((ModeKey) -> Void)?
 
     private var handler: EventHandlerRef?
     private var panelRefs: [EventHotKeyRef] = []
-    private var pickerRefs: [EventHotKeyRef] = []
+    private var modeRefs: [EventHotKeyRef] = []
     private var toggleRef: EventHotKeyRef?
     private var shortcutRef: EventHotKeyRef?
     private var isInstalled = false
@@ -164,7 +164,7 @@ final class HotKeys {
     /// paste, copy, escape, panel change, outside click or app switch. The bare
     /// arrows the earlier design also took are **not** here: row movement shares
     /// `⌃⌥←/→` with cycling, so it costs no registration at all.
-    private static let pickerKeys: [Key] = [
+    private static let modeKeys: [Key] = [
         Key(slot: .paste, keyCode: UInt32(kVK_Return), modifiers: 0),
         Key(slot: .pasteKeypad, keyCode: UInt32(kVK_ANSI_KeypadEnter), modifiers: 0),
         Key(slot: .copy, keyCode: UInt32(kVK_Return), modifiers: UInt32(optionKey)),
@@ -196,25 +196,29 @@ final class HotKeys {
     func uninstall() {
         panelRefs.forEach { UnregisterEventHotKey($0) }
         panelRefs.removeAll()
+        // The mode cannot outlive the island, so collapsing takes its keys too. The
+        // `$keyboardMode` sink already does this a moment earlier; clearing here as
+        // well means the invariant holds structurally, and a sink that stops firing
+        // cannot leave bare `↩` stolen from every app with no island on screen.
+        uninstallModeKeys()
         isInstalled = false
         // The Carbon event handler, the toggle hotkey and the clipboard shortcut
         // stay installed: collapsing the island must not also disarm the keys that
         // can reopen it.
     }
 
-    /// Row movement and dismissal, while a history row is selected.
+    /// Row actions and dismissal, while the island is in keyboard mode.
     ///
-    /// Registered in pairs with `uninstallPickerKeys()` and nowhere else: every path
-    /// out of the mode has to come through here, or bare `↩` stays stolen from every
-    /// app.
-    func installPickerKeys() {
-        guard pickerRefs.isEmpty else { return }
-        pickerRefs = Self.pickerKeys.compactMap(register)
+    /// Registered in pairs with `uninstallModeKeys()` and nowhere else: every path out
+    /// of the mode has to come through here, or bare `↩` stays stolen from every app.
+    func installModeKeys() {
+        guard modeRefs.isEmpty else { return }
+        modeRefs = Self.modeKeys.compactMap(register)
     }
 
-    func uninstallPickerKeys() {
-        pickerRefs.forEach { UnregisterEventHotKey($0) }
-        pickerRefs.removeAll()
+    func uninstallModeKeys() {
+        modeRefs.forEach { UnregisterEventHotKey($0) }
+        modeRefs.removeAll()
     }
 
     /// Replaces the clipboard shortcut; nil switches it off.
@@ -303,11 +307,11 @@ final class HotKeys {
         case .clipboard:
             onClipboard?()
         case .paste, .pasteKeypad:
-            onPickerKey?(.paste)
+            onModeKey?(.paste)
         case .copy:
-            onPickerKey?(.copy)
+            onModeKey?(.copy)
         case .close:
-            onPickerKey?(.close)
+            onModeKey?(.close)
         }
     }
 }

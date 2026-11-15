@@ -111,7 +111,7 @@ struct HistoryRow<Trailing: View>: View {
     let text: String
     var monospaced = false
     let help: String
-    /// The keyboard picker's current row. Drawn a step brighter than hover, so the
+    /// The keyboard mode's current row. Drawn a step brighter than hover, so the
     /// two can be told apart when the pointer happens to rest on another row.
     var selected = false
     let action: () -> Void
