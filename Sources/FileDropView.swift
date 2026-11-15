@@ -37,6 +37,13 @@ final class FileDropView: NSView {
     /// trip and `draggingUpdated` fires at pointer rate.
     private var operationForCurrentDrag: NSDragOperation = []
 
+    /// Whether the drag in flight is one this view would take.
+    ///
+    /// Read by the controller's safety net, which reads released files straight from
+    /// the drag pasteboard when no drop arrived. That net must not adopt a drag this
+    /// view *refused* — a refused drop is a decision, and the source was told so.
+    private(set) var acceptsDragInFlight = false
+
     /// The pre-UTI flavour: a property list of paths. The Dock writes it alongside
     /// `public.file-url`, and some older sources write only this.
     static let filenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
@@ -82,9 +89,12 @@ final class FileDropView: NSView {
     }
 
     /// The files are read here, at the drop, and not while the drag is in flight.
-    /// If this comes back empty the controller's safety net reads the drag
-    /// pasteboard again once the source has finished — see
-    /// `IslandController.restorePanelIfDragWasCancelled`.
+    ///
+    /// If this comes back empty the drop is refused and the icon snaps back, and the
+    /// controller's safety net reads the drag pasteboard again once the source has
+    /// finished — see `IslandController.restorePanelIfDragWasCancelled`. The snap-back
+    /// is expected, not a failure: the source had not produced the URLs yet, and
+    /// 250 ms later the shelf row appears anyway.
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let start = Date()
         let urls = Self.fileURLs(on: sender.draggingPasteboard)
@@ -100,10 +110,19 @@ final class FileDropView: NSView {
     /// re-checked on every update; the operation itself is not.
     private func current() -> NSDragOperation {
         let operation = canAccept() ? operationForCurrentDrag : []
+        acceptsDragInFlight = operation != []
         onTargetChange(operation != [])
         return operation
     }
 
+    /// What the destination promises to do, which AppKit treats as a contract: the
+    /// source may act on the operation we return.
+    ///
+    /// The shelf only ever **records a reference** — nothing is copied, linked or
+    /// moved. So `.move` must never be advertised: a source that took it at its word
+    /// could delete or relocate the original, and the shelf would be holding a path
+    /// to a file that is no longer there. A drag offering nothing but move is refused
+    /// instead, and the no-entry cursor says so.
     private func chooseOperation(for sender: NSDraggingInfo) -> NSDragOperation {
         // A shelf row being dragged out must not land straight back on the shelf.
         // Drags from other apps have no source object in this process.
@@ -116,16 +135,14 @@ final class FileDropView: NSView {
         let types = sender.draggingPasteboard.types ?? []
         guard types.contains(.fileURL) || types.contains(Self.filenamesType) else { return [] }
 
-        // Copy reads best — the cursor gets a plus — then link, which is closest to
-        // what the shelf actually does. Move only if it is all the source offers.
+        // Copy first: the cursor gets a plus, which reads as "a copy is being made".
+        // Link next, because a reference is what the shelf actually stores. Generic
+        // is the source deferring the choice to us, so it is safe to answer.
         let allowed = sender.draggingSourceOperationMask
-        for operation in [NSDragOperation.copy, .link, .generic, .move] where allowed.contains(operation) {
+        for operation in [NSDragOperation.copy, .link, .generic] where allowed.contains(operation) {
             return operation
         }
-        // Anything else bar delete — a private operation, say: take the first one
-        // offered rather than refuse a file the shelf could hold.
-        let rest = allowed.subtracting(.delete).rawValue
-        return rest == 0 ? [] : NSDragOperation(rawValue: rest & (~rest &+ 1))
+        return []
     }
 
     /// File URLs on a drag pasteboard, from the modern type or the old list of

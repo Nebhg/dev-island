@@ -642,8 +642,14 @@ final class IslandController {
             model.isInteracting = false
             // A file let go of over the open shelf. The drop normally reaches
             // `FileDropView`; `restorePanelIfDragWasCancelled` checks whether it did.
+            //
+            // `acceptsDragInFlight` is part of the eligibility, not just a log line:
+            // a drag the drop view refused — move-only, or one of our own rows —
+            // must not be adopted from the pasteboard afterwards. A refusal is a
+            // decision the source was told about.
             awaitingReleasedFiles = dragOpenedShelf
                 && !dragBeganOnIsland
+                && dropView.acceptsDragInFlight
                 && model.expanded
                 && islandRect.contains(NSEvent.mouseLocation)
             if Self.dragProbe, dragOpenedShelf {
@@ -805,6 +811,12 @@ final class IslandController {
                         self.model.receiveFiles(urls)
                     }
                 }
+                // The pasteboard has now been read for this drag, so the deferred
+                // clear the mouse-move branch owes is paid here rather than left
+                // until the pointer next moves — without it, stale file URLs stay
+                // live and the next window drag reads as a content drag.
+                self.dragPasteboardDirty = false
+                NSPasteboard(name: .drag).clearContents()
             }
             let dropped = self.model.shelfDidReceiveDrop
             let previous = self.panelBeforeDrag
