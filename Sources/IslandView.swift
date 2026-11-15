@@ -69,6 +69,7 @@ struct IslandRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onChange(of: target) { _, new in
+
             withAnimation(model.expanded ? Self.expandAnimation : Self.collapseAnimation) {
                 shapeSize = new
             }
@@ -1111,12 +1112,15 @@ struct MusicPanel: View {
 
     private var track: NowPlaying? { model.nowPlaying }
 
+    /// Square for album art, the frame's aspect for a video — see `MusicLayout`.
+    private var tile: CGSize { MusicLayout.tileSize(for: track?.artwork) }
+
     var body: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
 
             HStack(alignment: .top, spacing: 16) {
-                ArtworkView(image: track?.artwork, size: 132, radius: 20, shadow: true)
+                ArtworkView(image: track?.artwork, size: tile, radius: 20, shadow: true)
 
                 VStack(alignment: .leading, spacing: 3) {
                     MarqueeText(
@@ -1144,7 +1148,7 @@ struct MusicPanel: View {
                 }
                 // Matches the artwork so the block reads as one unit instead of a
                 // column stretched to the panel height.
-                .frame(height: 132, alignment: .top)
+                .frame(height: tile.height, alignment: .top)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -1156,7 +1160,7 @@ struct MusicPanel: View {
     /// Panel width minus the shell inset (24 each side), the panel inset (8 each
     /// side), the artwork and the gap beside it.
     private var textColumnWidth: CGFloat {
-        PanelID.music.preferredSize.width - 48 - 16 - 132 - 16
+        MusicLayout.panelWidth(for: track?.artwork) - 48 - 16 - tile.width - 16
     }
 
     private var subtitle: String {
@@ -1252,9 +1256,24 @@ struct TransportButton: View {
 
 struct ArtworkView: View {
     let image: NSImage?
-    let size: CGFloat
+    /// Square for album art, the source's aspect for a video frame.
+    let size: CGSize
     let radius: CGFloat
     var shadow = false
+
+    init(image: NSImage?, size: CGFloat, radius: CGFloat, shadow: Bool = false) {
+        self.image = image
+        self.size = CGSize(width: size, height: size)
+        self.radius = radius
+        self.shadow = shadow
+    }
+
+    init(image: NSImage?, size: CGSize, radius: CGFloat, shadow: Bool = false) {
+        self.image = image
+        self.size = size
+        self.radius = radius
+        self.shadow = shadow
+    }
 
     var body: some View {
         Group {
@@ -1273,12 +1292,12 @@ struct ArtworkView: View {
                 )
                 .overlay(
                     Image(systemName: "music.note")
-                        .font(.system(size: size * 0.36, weight: .semibold))
+                        .font(.system(size: min(size.width, size.height) * 0.36, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.85))
                 )
             }
         }
-        .frame(width: size, height: size)
+        .frame(width: size.width, height: size.height)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: radius, style: .continuous)
