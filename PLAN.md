@@ -19,10 +19,11 @@ review; §11 records signing and installation.
 | 5.5 — strip removed, per-panel sizes, resize rework | done |
 | 5.6 — history windows, `EXTENDED_HISTORY`, sandbox | done, verified against invented data |
 | 6 — media transport (§7) | done, verified with a browser |
-| 7 — browser artwork in a title-less diff | pending |
+| 7 — browser artwork in a title-less diff | done |
 | 8 — paste confirmation | pending |
-| 9 — video placeholder glyph | pending, maybe unnecessary |
-| 10 — view dedup (review 1B) | pending |
+| 9 — aspect-driven music layout | done, verified live |
+| 10 — video placeholder glyph | pending, maybe unnecessary |
+| 11 — view dedup (review 1B) | pending |
 
 Goal: turn a single-purpose music notch into a panel host with a clipboard
 history panel, a terminal-history panel, and a file shelf, plus a visual
@@ -144,7 +145,7 @@ The `32 pt` physical notch, the panel bar in that band, and padding consume
 | Clipboard | 520 × 320 | wide rows: text, source and age on one line; FREQUENT chips stop wrapping |
 | Terminal | 520 × 320 | long commands stop truncating |
 | Shelf | 440 × 102–260 | **height follows the file count**; 102 with one file, capped at 260 before it scrolls |
-| Music | 440 × 190 | 132 pt artwork + scrub + times + transport ≈ 150 pt of content |
+| Music | 440 × 190, or 520 × 190 for video | square album art keeps 440; a 16:9 frame widens to 520 so the thumbnail is not cropped (§6) |
 
 Clipboard and terminal are deliberately identical, so switching between the two
 most-used panels moves nothing at all.
@@ -780,6 +781,32 @@ stretching to the panel's full height and leaving the artwork floating. The pane
 is `440 × 190`: 132 pt of artwork plus scrub, times and a 28 pt transport row
 needs ~150 pt of content, and 310 was mostly empty.
 
+### Two layouts, chosen by the artwork
+
+A 16:9 video frame was centre-cropped into the square 132 pt tile, so a browser
+session showed a title over a slice of its thumbnail. Now:
+
+| Artwork | Tile | Panel |
+| --- | --- | --- |
+| Square (aspect ≤ 1.2) — album art | 132 × 132 | 440 × 190 |
+| Wide (aspect > 1.2) — a video frame | height 132, width `132 × aspect`, capped at 236 | 520 × 190 |
+
+**The image decides, not the source.** There is no reliable way to tell a video
+from a song: Spotify publishes `mediaType: …TypeAudio`, a browser playing YouTube
+omits `mediaType` entirely, and a YouTube music video and a YouTube video are the
+same thing to the system. Album art is square and a frame is not. A song posted as
+a video therefore shows as a video, which is right — that is what its artwork is.
+
+The threshold is 1.2 rather than "is it 16:9" so a 4:3 video keeps its shape (176 pt
+tile) instead of losing a quarter of itself to a square crop. The 236 cap stops a
+panorama eating the text column.
+
+Consequence: **the window changes width when the track changes**, using the same
+endpoint-resize machinery as a panel switch (§2). A late thumbnail therefore costs
+one extra ~0.4 s resize — metadata arrives first and widens nothing, then the
+artwork lands and the panel widens. Phase 7 shortened that gap but a browser
+genuinely sends artwork a moment later.
+
 Not proposed: tap-artwork-to-flip. No value, extra state.
 
 ---
@@ -892,10 +919,11 @@ the fastest way to inspect what a player is publishing:
 | 5.5 | ~~Remove the now-playing strip, per-panel sizes, window resized at endpoints only~~ **done** | — |
 | 5.6 | ~~`24h / 7d / 30d / All` windows on both history panels; `EXTENDED_HISTORY`; `ISLAND_DATA_DIR` sandbox~~ **done, verified against invented data** | — |
 | 6 | ~~Media transport: vendored `mediaremote-adapter` built from source, streamed through `MediaStream`~~ **done and verified with a real browser session** | — |
-| 7 | Artwork arriving in a title-less diff is dropped, so a browser thumbnail can be missed (§7) | ~30 min |
+| 7 | ~~Artwork arriving in a title-less diff was dropped~~ **done** — patches now applied; browser thumbnails work | — |
 | 8 | Paste confirmation in the closed notch, toggleable from the clipboard header (§3) | ~1 hour |
-| 9 | Video placeholder glyph for sessions with no artwork — only if 7 leaves gaps (§7) | ~30 min, maybe unnecessary |
-| 10 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
+| 9 | ~~Aspect-driven music layout so a video thumbnail is not cropped~~ **done, verified with a live session** | — |
+| 10 | Video placeholder glyph for sessions with no artwork — only if a session ever publishes none (§7) | ~30 min, maybe unnecessary |
+| 11 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
 
 Phases 1–5.6 are complete. The panel shell did turn each feature into a provider
 plus a view: the clipboard and terminal panels each landed without touching the
@@ -1207,7 +1235,10 @@ pointer; it is checked in `scheduleCollapse()` alongside `isInteracting` (§1).
   and check that the window is never smaller than the island (risk 7).
 - `screencapture -l <windowid>` captures a window's whole buffer including
   transparent area, which makes it the fastest way to inspect a panel without
-  depending on what is underneath it.
+  depending on what is underneath it. **It can also return the previous frame** —
+  a stale 440 pt buffer made a correct 520 pt layout look broken. When a
+  measurement disagrees with the code, re-capture, and trust the window's own
+  frame (`CGWindowListCopyWindowInfo`) over the pixels.
 - A second launch while the first is still shutting down exits on the `flock`, and
   the window you then inspect belongs to the *old* process — which is exactly how a
   stale 32 pt window got misdiagnosed as a collapse bug. Sleep 2–3 s after
@@ -1228,7 +1259,7 @@ them were already fixed when the document was read, because it was taken before
 | # | Finding | Status |
 | --- | --- | --- |
 | 1A | Application Support boilerplate in four places | **done** — `AppSupport.directory()` (`ff2505e`) |
-| 1B | Duplicated panel subviews | **pending** — Phase 10, see below |
+| 1B | Duplicated panel subviews | **pending** — Phase 11, see below |
 | 1C | Atomic JSON write duplicated in both stores | **done** — `AtomicJSON.write` (`ff2505e`) |
 | 2.1 | `PlaceholderPanel` unreachable since `ExpandedPanel` became exhaustive | **done** — deleted (`674f7e3`) |
 | 2.2 | Orphaned doc comment left mid-sentence above `NoticeStrip` | **done** — deleted (`674f7e3`) |
