@@ -36,20 +36,25 @@ playing YouTube shows its title, channel, position and thumbnail (§7).
 
 These matter because they invalidate some obvious approaches.
 
+**Sources are cited by symbol, not by line.** Line numbers were here first and had
+all silently drifted by the time this was reviewed — `islandSize` had moved by 44
+lines, `expand()` by more than a hundred. A symbol survives an edit; a line number
+does not.
+
 | Fact | Source | Consequence |
 | --- | --- | --- |
-| `islandSize` derives from `expanded` and `activePanel`, and from `shelf.items` for the shelf **(Phase 1, reworked Phase 5.5)** | `Sources/IslandModel.swift:103` | Size changes no longer rely on snapping the frame in the same turn. The window is grown to `max(old, new)` **before** the shape animates and settles afterwards, driven synchronously from the model's setters, so `islandRect` / `inHotZone` are never wrong for a frame — see §2. Two consequences: `expanded` / `activePanel` must go through their `didSet` rather than a Combine sink, and anything else that changes `islandSize` must re-publish — which is why `IslandModel` subscribes to `shelf.$items`. |
-| `expand()` selects `defaultPanel` before flipping `expanded` **(found in Phase 4)** | `Sources/IslandModel.swift:86-90` | Anything wanting a specific panel on expand must select it **after** calling `expand()`; selecting first is silently overwritten. This cost a drop target: the shelf was selected during a drag, `expand()` replaced it with the default panel, and the drop landed on a panel with no drop handler. |
+| `islandSize` derives from `expanded` and `activePanel`, and from `shelf.items` for the shelf **(Phase 1, reworked Phase 5.5)** | `Sources/IslandModel.swift` (`islandSize`) | Size changes no longer rely on snapping the frame in the same turn. The window is grown to `max(old, new)` **before** the shape animates and settles afterwards, driven synchronously from the model's setters, so `islandRect` / `inHotZone` are never wrong for a frame — see §2. Two consequences: `expanded` / `activePanel` must go through their `didSet` rather than a Combine sink, and anything else that changes `islandSize` must re-publish — which is why `IslandModel` subscribes to `shelf.$items`. |
+| `expand()` selects `defaultPanel` before flipping `expanded` **(found in Phase 4)** | `Sources/IslandModel.swift` (`expand()`) | Anything wanting a specific panel on expand must select it **after** calling `expand()`; selecting first is silently overwritten. This cost a drop target: the shelf was selected during a drag, `expand()` replaced it with the default panel, and the drop landed on a panel with no drop handler. |
 | No SPM, no dependencies — plain `swiftc` | `build.sh` | No GRDB/Realm. Persistence must be `Codable` JSON, capped and debounced. |
 | `~/.zsh_history`: ~1,300 lines and growing, **no timestamps**, `\` continuations, non-UTF-8 bytes | measured | Recency must come from file position, not time. The parser must join continuations and decode lossily. `INC_APPEND_HISTORY` is now set in `~/.zshrc`, so the file is written per command rather than on shell exit. `EXTENDED_HISTORY` is still off. |
-| `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift:383` | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay interactive as an `NSDraggingDestination`, while the `249 pt` playing chin stays click-through because it covers live menu bar. |
+| `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift` (`refreshMousePolicy`) | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay interactive as an `NSDraggingDestination`, while the `249 pt` playing chin stays click-through because it covers live menu bar. |
 | Hover monitors cover `.mouseMoved`, `.leftMouseDown`, `.leftMouseDragged`, `.leftMouseUp` **(Phase 4)** | `Sources/IslandController.swift` (`installMonitors`, `isCarryingContent`) | A held mouse button posts `.leftMouseDragged`, not `.mouseMoved`, so drag-in needs its own event type or the island never expands. The gate is the drag pasteboard's **types**, not its `changeCount`: measured, the count does not move when a drag starts. The pasteboard is cleared on `.mouseMoved` because AppKit leaves the previous drag's types behind. See §5. |
 | Polls only run while expanded **(Phase 1)** | `Sources/IslandController.swift` (`$expanded` sink), `Sources/IslandModel.swift` (`startPolling` / `stopPolling`) | Both the Spotlight watch and `PlayerService.startPolling()` / `stopPolling()` are driven off `$expanded`. Verified: zero `osascript` spawns while closed. This is the precedent the `PanelProvider` lifecycle follows. |
 | Panel level `.mainMenu + 3`, SkyLight space attach | `Sources/FullscreenSupport.swift` | New panels inherit this; no extra work. |
 | Window frame tracks the island **(Phase 2/5)** | `Sources/IslandController.swift` (`updateGeometry`, `scheduleSettle`, `applyWindowSize`, `onGeometryChange`), `IslandView.swift` (`IslandRootView`) | The window is resized **twice per transition** — up to `max(old, new)` before the shape moves, and back to the target after it settles — and never in between. Three things are load-bearing: the window must never be smaller than the shape (that is the whole fix for risk 7), the content must be laid out at the target size rather than the animating one (otherwise every frame reflows text, which was the jank), and `onGeometryChange` must fire **synchronously** from the model setters, before SwiftUI's first frame. `pointerCapture` separately stops a shrink from collapsing the island out from under a stationary pointer — see §2. |
 | Click-to-Spotlight (`openSpotlight()`) | `Sources/IslandView.swift` / `IslandModel.swift` | Removed in Phase 1 (`⌘Space` is the precedent); Spotlight avoidance / suppression while `SpotlightState.isOpen` is retained. |
-| 30 ms collapse on pointer exit, with an existing `isInteracting` escape hatch | `Sources/IslandController.swift:566` (`scheduleCollapse`), `Sources/IslandModel.swift:49` (`isInteracting`) | Collapse is deferred 30 ms and then re-checks three conditions: `!model.locksOpen`, `!isInteracting`, `!inHotZone(mouseLocation)`. Right-click `NSMenu`s, drag-ins and drag-outs all move the pointer outside `islandRect`, so `isInteracting` is the guard. It is set by the drag path in `IslandController` and by `ShelfRowInput` while a context menu or drag-out is tracking — no second flag. |
-| `IslandPanel` overrides `canBecomeKey = true` **(Phase 2)** | `Sources/IslandController.swift:5-8` | `becomesKeyOnlyIfNeeded` is now `true`, so a click cannot take key status and swallow the synthetic `⌘V`. Auto-paste verified working by clicking a row and pasting into an editor. |
+| 30 ms collapse on pointer exit, with an existing `isInteracting` escape hatch | `Sources/IslandController.swift` (`scheduleCollapse`), `Sources/IslandModel.swift` (`isInteracting`) | Collapse is deferred 30 ms and then re-checks three conditions: `!model.locksOpen`, `!isInteracting`, `!inHotZone(mouseLocation)`. Right-click `NSMenu`s, drag-ins and drag-outs all move the pointer outside `islandRect`, so `isInteracting` is the guard. It is set by the drag path in `IslandController` and by `ShelfRowInput` while a context menu or drag-out is tracking — no second flag. |
+| `IslandPanel` overrides `canBecomeKey = true` **(Phase 2)** | `Sources/IslandController.swift` (`IslandPanel`) | `becomesKeyOnlyIfNeeded` is now `true`, so a click cannot take key status and swallow the synthetic `⌘V`. Auto-paste verified working by clicking a row and pasting into an editor. |
 
 Environment: Apple Silicon, macOS 26 (27.3 beta), screen 1512 × 982 @2x, notch
 185 × 32 pt. Shell is zsh. Browsers installed: Chrome, Edge, Safari. Media app:
@@ -786,9 +791,10 @@ replacement is one shared surface for every panel:
 
 The player block is centred vertically and its right column is pinned to the
 artwork's height (`132 pt`), so the title sits beside the artwork instead of
-stretching to the panel's full height and leaving the artwork floating. The panel
-is `440 × 190`: 132 pt of artwork plus scrub, times and a 28 pt transport row
-needs ~150 pt of content, and 310 was mostly empty.
+stretching to the panel's full height and leaving the artwork floating. The height
+is `190`: 132 pt of artwork plus scrub, times and a 28 pt transport row needs ~150 pt
+of content, and the original 310 was mostly empty. (It was `440 × 190` until the
+music panel became one width for every source — see below.)
 
 ### One size, aspect-fitted tile
 
@@ -992,8 +998,10 @@ the panel shows stale commands and raises a notice strip) and
    only ever shows transparent margin around an already-drawn island, which is
    indistinguishable from the island growing.
    Verified by sampling the window bounds every 60 ms through a clipboard→music
-   switch: the window held `520 × 320` for the whole animation, then settled to
-   `440 × 190`. The same for expand (189 × 32 → 520 × 320) and collapse.
+   switch: the window held `520 × 320` for the whole animation, then settled to the
+   music panel's size (`440 × 190` at the time, since music was narrower then; it is
+   `520 × 190` now, so that particular switch no longer resizes at all). The same for
+   expand (189 × 32 → 520 × 320) and collapse.
    The earlier attempts all tried to make a per-frame window resize keep up; this
    removes the per-frame resize instead.
    The 8x slowed captures that never reproduced the bug are consistent with this:
@@ -1052,16 +1060,15 @@ any of them can be reversed.
 
 ### Decided
 
-- **Panel sizes:** `440 × 190` (Music), `520 × 320` (Clipboard & Terminal), `440 × content-height` (Shelf, 102–260).
+- **Panel sizes:** `520 × 190` (Music), `520 × 320` (Clipboard & Terminal), `440 × content-height` (Shelf, 102–260).
 - **Window sizing:** The window is resized **only at the endpoints** of a transition — up to `max(old, new)` before the shape moves, back to the target after it settles — and never in between. The window is therefore never smaller than the shape, which is what removes the see-through (§2, risk 7). Springs stay critically damped because an overshoot would push the shape past the window.
 - **Spotlight trigger:** Removed (`⌘Space` is the precedent); Spotlight avoidance / suppression while `SpotlightState.isOpen` is retained.
-- **Music layout:** `440 × 190`, `132 pt` artwork, scrub bar in the right column beside it (§6).
+- **Music layout:** `520 × 190` — one size for every source — `132 pt` artwork with an aspect-fitted tile, scrub bar in the right column beside it (§6).
 - **Closed-state Spotify poll:** Gate the `1.5 s` AppleScript timer to `expanded` only; rely on notifications while closed.
-- **Click behaviour:** Auto-paste is the default (`⌘V` after collapse); `⌥`-click is copy-only. An **Autopaste On / Off** pill in both history headers toggles the default and is persisted. A missing Accessibility grant is surfaced as an actionable notice, not as a silent failure — see §3.
+- **Click behaviour:** Auto-paste is the default (`⌘V` after collapse); `⌥`-click is copy-only, per click. An **Autopaste** pill reading **On** / **Off** in both history headers toggles the default and is persisted — named for the setting rather than the outcome, because "Paste / Copy" read as an action button rather than a state. A missing Accessibility grant is surfaced as an actionable notice, not as a silent failure — see §3.
 - **Terminal panel click:** Auto-paste with trailing newline stripped so a stray Return cannot execute a pasted command.
 - **Signing identity:** Self-signed Code Signing certificate (`Dev Island Local Signing`), not ad-hoc, so TCC Accessibility and Automation grants survive rebuilds.
 - **Clipboard capture while closed:** Accepted (`0.4 s` `changeCount` integer compare).
-- **Auto-paste is a preference, not a constant.** A pill labelled **Autopaste** with **On** or **Off** in both history headers — named for the setting rather than for the outcome, because "Paste / Copy" read as an action button rather than a state. Persisted; ⌥-click remains per-click copy-only. One setting shown on both panels.
 - **Paste confirmation is a toast under the island, not a tick in the chin.** The panel is gone by the time ⌘V lands, so the acknowledgement has to survive the collapse. It says what happened — `Auto-pasted` or `Copied to clipboard` — because that is the question, and the chin's two 32 pt wings beside the cutout cannot hold a sentence. Always shown; a toggle for it was tried and removed.
 - **Testing never touches real data.** `ISLAND_DATA_DIR` redirects every store plus the instance lock, and `ISLAND_HISTORY` points the terminal panel at a fixture. The time windows were verified that way; the shell history and `clipboard.json` were confirmed untouched afterwards.
 - **History windows are a filter, never retention.** `24h / 7d / 30d / All` per panel, applied to both the list and the chips. Nothing is deleted; a shorter clipboard cap is the separate, safe lever if storage ever needs to shrink.
@@ -1071,6 +1078,22 @@ any of them can be reversed.
 - **Terminal persistence:** none. The history is re-parsed from `~/.zsh_history` on change rather than cached in `terminal.json`.
 - **Clipboard vs terminal overlap — kept, not gated.** The clipboard captures commands as well as text, so a command you copied can appear in both panels. *Gating the clipboard to non-commands was considered and rejected:* it would delete exactly the entries the terminal can never hold — commands copied from docs, Slack or the web that have not been run yet. *Deduplicating against shell history was also rejected:* it hides a command you copied only to share, breaking the clipboard's "everything I copied" contract in a surprising way.
   If the overlap becomes annoying in use, the fix is to record the source app per entry (already read from `frontmostApplication` for the password-manager blocklist) and demote terminal-sourced copies — not to filter by kind.
+- **Shelf stores references, not copies.** Path plus a plain (non-security-scoped)
+  bookmark, deduped by resolved path, capped at 30. Both reference implementations
+  do the same, and it is what the shelf is *for*: a staging area where removing an
+  item never touches the real file. Copying into Application Support was rejected —
+  it duplicates data silently, needs its own size cap and cleanup, and makes
+  "remove from shelf" ambiguous about whether the real file is affected (§5).
+- **Default panel is Clipboard.** It is the panel that is useful the instant the
+  island opens — you open it to get something back, not to look at something.
+  Persisted, with a stored `music` migrated because that was the old default rather
+  than a choice (§2).
+- **Music is a panel, and the closed notch carries it.** A now-playing strip on
+  every other panel was built and removed: it was chrome that stayed on screen and
+  duplicated what the notch already showed. Music keeps its own full panel, and
+  while the island is closed the chin beside the cutout shows artwork and a
+  waveform — cheaply, since those bars are Core Animation (§6). macOS draws its own
+  live activity further along the menu bar; both are visible on purpose.
 - **Shelf accepts files only.** Text and links were implemented and then removed:
   the clipboard already captures both automatically and copying is faster than
   dragging, so a shelf row for them was a second place to look for the same
@@ -1096,13 +1119,13 @@ any of them can be reversed.
 - **No second collapse flag:** Phase 4 wires the existing `isInteracting` rather than adding an `isStuckWhileDragging`-style flag.
 - **Not building:** Pockets, QuickLook integration, thumbnails, shift-click range selection, and shelf copies — reasons per row in §5.
 
-### Open decisions — none
+### Open decisions
 
-Both were settled during the build, recorded so the reasoning is not re-opened:
+**None.** Every question this plan raised has been settled by the shipped code, and
+the answers are recorded above rather than deleted, so the reasoning is not
+re-litigated. The two that were open longest — default panel and music-as-chrome —
+are now the *Default panel* and *Music is a panel* bullets.
 
-1. ~~**Default panel on first hover**~~ — Clipboard.
-2. ~~**Music as chrome + one panel**~~ — neither. The strip was removed; music lives
-   in the closed notch (and the system's own live activity sits beside it).
 
 ---
 
