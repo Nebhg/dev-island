@@ -1045,6 +1045,31 @@ trusted for code signing in the user trust domain, and is valid until 2036.
 `build.sh` signs with it and the designated requirement is stable across
 rebuilds.
 
+### Installing, so ⌘Space finds it
+
+A `.app` in a source tree is not an Application as far as Spotlight and
+LaunchServices are concerned, so it cannot be launched by typing its name.
+`build.sh` now moves the signed bundle to `~/Applications/Dev Island.app` and runs
+`lsregister -f` on it, which is what makes it appear immediately rather than on the
+next metadata pass.
+
+- **Moved, not copied**, and the repo path becomes a symlink to the installed
+  bundle. Two real bundles would both be indexed and Spotlight would offer the
+  same app twice; the symlink keeps `./DevIsland.app/...` working for scripts and
+  tests while exactly one bundle exists.
+- **The spaced name matters.** Installed as `DevIsland.app` it indexed as
+  "DevIsland" and `open -a "Dev Island"` could not find it at all — the display
+  name comes from the file name, not `CFBundleName`.
+- **TCC survives the move**, verified: the clipboard panel opens with no "Grant
+  Accessibility" notice, because grants key on the designated requirement
+  (identifier plus certificate), not on the path.
+- Set `ISLAND_NO_INSTALL=1` to build without installing, or `ISLAND_INSTALL_DIR`
+  to install somewhere else.
+
+Quit is the status item's Quit, which calls `NSApp.terminate` and so runs
+`applicationWillTerminate` → `PlayerService.shutdown()` → the media helper is
+terminated. There is deliberately **no login item**: the app runs when asked for.
+
 Created with OpenSSL rather than the Keychain Access GUI, which is reproducible:
 
 ```zsh

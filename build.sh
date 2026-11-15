@@ -117,5 +117,33 @@ cp "$ADAPTER_SRC/LICENSE" "$APP/Contents/Resources/MediaRemoteAdapter-LICENSE.tx
 codesign --force --sign "$IDENTITY" --timestamp=none "$FW" >/dev/null
 codesign --force --sign "$IDENTITY" --timestamp=none "$APP" >/dev/null
 
+# Install where Spotlight looks.
+#
+# A .app sitting in a source tree is not an Application as far as Spotlight and
+# LaunchServices are concerned, so it cannot be typed into ⌘Space. ~/Applications
+# is user-writable (no admin prompt) and is one of the folders macOS indexes for
+# apps, so a copy there is findable by name without touching the build output.
+#
+# `lsregister -f` is what makes it appear immediately instead of on the next mdB
+# pass. Skip with ISLAND_NO_INSTALL=1 when iterating and only the local copy
+# matters; override the destination with ISLAND_INSTALL_DIR.
+INSTALL_DIR="${ISLAND_INSTALL_DIR:-$HOME/Applications}"
+# The installed name is what Spotlight shows and what `open -a` matches, so it has
+# to be the spaced product name rather than the build directory's `DevIsland.app`.
+INSTALLED="$INSTALL_DIR/Dev Island.app"
+if [[ "${ISLAND_NO_INSTALL:-0}" != "1" ]]; then
+  mkdir -p "$INSTALL_DIR"
+  rm -rf "$INSTALLED"
+  # Move rather than copy, then point the repo path at the installed bundle. Two
+  # real bundles would both be indexed and Spotlight would offer the same app
+  # twice; a symlink keeps `./DevIsland.app/...` working for scripts and tests
+  # while only one bundle exists.
+  mv "$APP" "$INSTALLED"
+  ln -s "$INSTALLED" "$APP"
+  LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+  [[ -x "$LSREGISTER" ]] && "$LSREGISTER" -f "$INSTALLED" 2>/dev/null || true
+  echo "Installed: $INSTALLED"
+fi
+
 echo "Built $APP"
 echo "Signed with: $IDENTITY"
