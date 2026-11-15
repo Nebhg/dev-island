@@ -85,12 +85,17 @@ final class MediaStream {
     /// not reliably close the pipe and the child can outlive it — observed: two
     /// orphans after a few relaunches. `applicationWillTerminate` covers a clean
     /// quit, but nothing runs on SIGKILL and nothing is guaranteed on SIGTERM, so
-    /// the next launch cleans up. Matching on the script path can only ever hit
-    /// our own helper.
+    /// the next launch cleans up.
+    ///
+    /// Matched on the script's **name**, not its full path: the bundle resolves
+    /// differently depending on how the app was launched (the repo's
+    /// `DevIsland.app` is a symlink to `~/Applications`), so a path-keyed sweep
+    /// left one helper alive for every launch method used. `mediaremote-adapter.pl`
+    /// is specific enough that it can only match our own child.
     private func sweepOrphans(script: URL) {
         let killer = Process()
         killer.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        killer.arguments = ["-f", script.path]
+        killer.arguments = ["-f", script.lastPathComponent]
         killer.standardOutput = FileHandle.nullDevice
         killer.standardError = FileHandle.nullDevice
         try? killer.run()
