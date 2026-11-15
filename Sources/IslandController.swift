@@ -169,14 +169,6 @@ final class IslandController {
         // The chin appearing or disappearing changes the closed window's size as
         // well as what it covers, so the frame and the click-through policy both
         // have to follow it.
-        model.$nowPlaying
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.updateGeometry()
-                self?.refreshMousePolicy()
-            }
-            .store(in: &cancellables)
-
         // `@Published` does not replay, so an island opened by a launch flag never
         // produced the `$expanded` event and therefore never started polling. That
         // is exactly what a screenshot session wants to look like, and it made the
@@ -379,14 +371,15 @@ final class IslandController {
     /// only the physical cutout — no pixels, nothing behind it — so it stays
     /// interactive and can act as a drop target. Closed while playing, the chin
     /// covers live menu-bar space, so it must let clicks through.
+    /// Closed, the window is only the camera cutout, so it stays interactive: it is
+    /// the drop target for dragging a file at the notch, and there is no menu bar
+    /// underneath it to steal clicks from.
+    ///
+    /// This used to branch on `isPlaying`, because the playing chin covered live
+    /// menu bar and had to let clicks through. The chin is gone — macOS draws the
+    /// now-playing live activity itself — so the special case went with it.
     private func refreshMousePolicy() {
-        if model.expanded {
-            panel.ignoresMouseEvents = false
-        } else if model.nowPlaying?.isPlaying == true {
-            panel.ignoresMouseEvents = true
-        } else {
-            panel.ignoresMouseEvents = false
-        }
+        panel.ignoresMouseEvents = !model.expanded
     }
 
     // MARK: - Hover

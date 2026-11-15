@@ -133,12 +133,16 @@ final class IslandModel: ObservableObject {
             }
             return activePanel.preferredSize
         }
-        // BoringNotch's "chin": the closed notch is 2pt wider than the cutout,
-        // and grows by 2*(height-12)+20 while music plays.
-        let base = notchSize.width + 4
-        let playing = nowPlaying?.isPlaying == true
-        let chin = playing ? (2 * max(0, notchSize.height - 12) + 20) : 0
-        return CGSize(width: base + chin, height: notchSize.height)
+        // Closed, the island is the camera cutout and 2pt either side — no pixels,
+        // nothing clickable behind it, invisible against the notch.
+        //
+        // There used to be a "chin" here: the island widened by
+        // `2 * (height - 12) + 20` while music played, showing artwork and a
+        // waveform. That is exactly what macOS now draws itself as a live activity
+        // to the right of the notch, so both appeared side by side — two artworks
+        // 200 pt apart. The system's is better: it is already there, it uses the
+        // artwork's colours, it survives a pause, and it costs us nothing.
+        return CGSize(width: notchSize.width + 4, height: notchSize.height)
     }
 
     /// The island is always pinned to the top edge of the display.

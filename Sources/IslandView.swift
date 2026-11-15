@@ -82,7 +82,10 @@ struct IslandRootView: View {
             ExpandedPanel(model: model)
                 .transition(.opacity)
         } else {
-            WingContent(model: model)
+            // Nothing: closed, the window is only the cutout, and macOS already
+            // draws the now-playing live activity beside the notch. See
+            // `IslandModel.islandSize`.
+            Color.clear
         }
     }
 }
@@ -134,32 +137,6 @@ struct NotchShape: Shape {
 }
 
 // MARK: - Closed
-
-struct WingContent: View {
-    @ObservedObject var model: IslandModel
-
-    var body: some View {
-        HStack(spacing: 0) {
-            if let track = model.nowPlaying {
-                ArtworkView(image: track.artwork, size: 20, radius: 4)
-                    .padding(.leading, 6)
-            }
-
-            Spacer(minLength: 0)
-
-            if model.nowPlaying?.isPlaying == true {
-                Equalizer()
-                    .padding(.trailing, 8)
-            } else if model.nowPlaying != nil {
-                Image(systemName: "pause.fill")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .padding(.trailing, 10)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
 
 // MARK: - Open: panel shell
 
@@ -1201,42 +1178,6 @@ struct MusicPanel: View {
 
 
 // MARK: - Pieces
-
-struct Equalizer: View {
-    /// Bars are driven from a timer at ~8 fps rather than a `repeatForever`
-    /// animation.
-    ///
-    /// Measured: with the implicit animation the closed chin cost **9% of a core**,
-    /// because it redrew the whole island at display rate. That is the state the
-    /// island spends most of its life in — music playing, nothing being looked at.
-    /// The same island expanded costs 1.7%, since the chin is not on screen.
-    ///
-    /// At 8 fps the bars still read as a waveform and the cost drops to noise. The
-    /// schedule starts from a fixed epoch, not `.now`: `.now` is re-evaluated on
-    /// every render, which restarts the schedule and pins a core — the same trap as
-    /// the clipboard's age timeline.
-    var body: some View {
-        TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: 0.12)) { context in
-            let phase = context.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .center, spacing: 2) {
-                ForEach(0..<3, id: \.self) { index in
-                    Capsule()
-                        .fill(.white.opacity(0.85))
-                        .frame(width: 2.5, height: height(index: index, phase: phase))
-                }
-            }
-            .frame(height: 12)
-        }
-    }
-
-    /// Two out-of-step sines, so the bars do not look like one animation with a
-    /// delay bolted on.
-    private func height(index: Int, phase: TimeInterval) -> CGFloat {
-        let speed = 6.0 + Double(index) * 1.4
-        let wobble = sin(phase * speed + Double(index) * 1.7)
-        return 4 + CGFloat((wobble + 1) / 2) * (4 + CGFloat(index) * 2)
-    }
-}
 
 struct TransportButton: View {
     let symbol: String

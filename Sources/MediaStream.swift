@@ -42,7 +42,7 @@ final class MediaStream {
             return
         }
 
-        sweepOrphans(script: script)
+        sweepOrphan()
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
@@ -74,32 +74,50 @@ final class MediaStream {
             try process.run()
             self.process = process
             self.pipe = pipe
+            try? String(process.processIdentifier).write(
+                to: Self.pidURL, atomically: true, encoding: .utf8)
         } catch {
             NSLog("DevIsland: could not start media stream: \(error)")
         }
     }
 
-    /// Kills helpers left behind by an earlier run.
+    /// Where the child's pid is remembered between runs.
+    private static var pidURL: URL {
+        AppSupport.directory().appendingPathComponent("media-helper.pid")
+    }
+
+    /// Kills the helper left behind by an earlier run, if there is one.
     ///
-    /// The adapter writes only when the session *changes*, so a killed app does
-    /// not reliably close the pipe and the child can outlive it — observed: two
-    /// orphans after a few relaunches. `applicationWillTerminate` covers a clean
-    /// quit, but nothing runs on SIGKILL and nothing is guaranteed on SIGTERM, so
-    /// the next launch cleans up.
+    /// The adapter writes only when the session *changes*, so a killed app does not
+    /// reliably close the pipe and the child can outlive it — observed: two helpers
+    /// streaming at once. `applicationWillTerminate` covers a clean quit, but nothing
+    /// runs on SIGKILL and nothing is guaranteed on SIGTERM, so the next launch
+    /// cleans up.
     ///
-    /// Matched on the script's **name**, not its full path: the bundle resolves
-    /// differently depending on how the app was launched (the repo's
-    /// `DevIsland.app` is a symlink to `~/Applications`), so a path-keyed sweep
-    /// left one helper alive for every launch method used. `mediaremote-adapter.pl`
-    /// is specific enough that it can only match our own child.
-    private func sweepOrphans(script: URL) {
-        let killer = Process()
-        killer.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        killer.arguments = ["-f", script.lastPathComponent]
-        killer.standardOutput = FileHandle.nullDevice
-        killer.standardError = FileHandle.nullDevice
-        try? killer.run()
-        killer.waitUntilExit()
+    /// **A pid file, not `pkill -f`.** Pattern matching on the script name killed
+    /// whatever else happened to mention it — including a shell running a command
+    /// line that referenced the adapter, which is how this was noticed: the app
+    /// terminated the terminal that launched it. Signalling one remembered pid,
+    /// after confirming by inspection that it is still our helper, cannot do that.
+    private func sweepOrphan() {
+        guard let text = try? String(contentsOf: Self.pidURL, encoding: .utf8),
+              let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              pid > 0
+        else { return }
+
+        // A recycled pid must not take a stray process with it, so ask ps what it
+        // is before signalling. This inspects one process; it does not hunt.
+        let ps = Process()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-o", "command=", "-p", String(pid)]
+        let pipe = Pipe()
+        ps.standardOutput = pipe
+        ps.standardError = FileHandle.nullDevice
+        guard (try? ps.run()) != nil else { return }
+        ps.waitUntilExit()
+        let command = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        guard command.contains("mediaremote-adapter.pl") else { return }
+        kill(pid, SIGTERM)
     }
 
     func stop() {
@@ -108,6 +126,7 @@ final class MediaStream {
         process?.terminate()
         process = nil
         pipe = nil
+        try? FileManager.default.removeItem(at: Self.pidURL)
     }
 
     // MARK: - Parsing
