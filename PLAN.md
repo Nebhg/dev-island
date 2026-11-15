@@ -30,17 +30,17 @@ These matter because they invalidate some obvious approaches.
 
 | Fact | Source | Consequence |
 | --- | --- | --- |
-| `islandSize` returns `activePanel.preferredSize` while open **(Phase 1)** | `Sources/IslandModel.swift:53-61` | The resize invariant must still hold in one turn: **snap `NSPanel` frame → update `activePanel` / `islandSize` → recompute `islandRect` / `inHotZone`**, otherwise `handleMouse` sees a mismatch and collapses mid-click. |
+| `islandSize` derives from `expanded` and `activePanel`, and from `shelf.items` for the shelf **(Phase 1, reworked Phase 5.5)** | `Sources/IslandModel.swift:103` | Size changes no longer rely on snapping the frame in the same turn. The window is grown to `max(old, new)` **before** the shape animates and settles afterwards, driven synchronously from the model's setters, so `islandRect` / `inHotZone` are never wrong for a frame — see §2. Two consequences: `expanded` / `activePanel` must go through their `didSet` rather than a Combine sink, and anything else that changes `islandSize` must re-publish — which is why `IslandModel` subscribes to `shelf.$items`. |
 | `expand()` selects `defaultPanel` before flipping `expanded` **(found in Phase 4)** | `Sources/IslandModel.swift:86-90` | Anything wanting a specific panel on expand must select it **after** calling `expand()`; selecting first is silently overwritten. This cost a drop target: the shelf was selected during a drag, `expand()` replaced it with the default panel, and the drop landed on a panel with no drop handler. |
 | No SPM, no dependencies — plain `swiftc` | `build.sh` | No GRDB/Realm. Persistence must be `Codable` JSON, capped and debounced. |
 | `~/.zsh_history`: ~1,300 lines and growing, **no timestamps**, `\` continuations, non-UTF-8 bytes | measured | Recency must come from file position, not time. The parser must join continuations and decode lossily. `INC_APPEND_HISTORY` is now set in `~/.zshrc`, so the file is written per command rather than on shell exit. `EXTENDED_HISTORY` is still off. |
-| `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift:244-252` | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay permanently interactive as `NSDraggingDestination`, while the `249 pt` playing chin stays click-through. Phase 4 depends on this. |
+| `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift:383` | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay permanently interactive as `NSDraggingDestination`, while the `249 pt` playing chin stays click-through. Phase 4 depends on this. |
 | Hover monitors cover `.mouseMoved`, `.leftMouseDown`, `.leftMouseDragged`, `.leftMouseUp` **(Phase 4)** | `Sources/IslandController.swift` (`installMonitors`, `isCarryingContent`) | A held mouse button posts `.leftMouseDragged`, not `.mouseMoved`, so drag-in needs its own event type or the island never expands. The gate is the drag pasteboard's **types**, not its `changeCount`: measured, the count does not move when a drag starts. The pasteboard is cleared on `.mouseMoved` because AppKit leaves the previous drag's types behind. See §5. |
-| Polls only run while expanded **(Phase 1)** | `Sources/IslandController.swift:105-119`, `Sources/IslandModel.swift:137-149` | Both the Spotlight watch and `PlayerService.startPolling()` / `stopPolling()` are driven off `$expanded`. Verified: zero `osascript` spawns while closed. This is the precedent the `PanelProvider` lifecycle follows. |
+| Polls only run while expanded **(Phase 1)** | `Sources/IslandController.swift` (`$expanded` sink), `Sources/IslandModel.swift` (`startPolling` / `stopPolling`) | Both the Spotlight watch and `PlayerService.startPolling()` / `stopPolling()` are driven off `$expanded`. Verified: zero `osascript` spawns while closed. This is the precedent the `PanelProvider` lifecycle follows. |
 | Panel level `.mainMenu + 3`, SkyLight space attach | `Sources/FullscreenSupport.swift` | New panels inherit this; no extra work. |
 | Window frame tracks the island **(Phase 2/5)** | `Sources/IslandController.swift` (`updateGeometry`, `scheduleSettle`, `applyWindowSize`, `onGeometryChange`), `IslandView.swift` (`IslandRootView`) | The window is resized **twice per transition** — up to `max(old, new)` before the shape moves, and back to the target after it settles — and never in between. Three things are load-bearing: the window must never be smaller than the shape (that is the whole fix for risk 7), the content must be laid out at the target size rather than the animating one (otherwise every frame reflows text, which was the jank), and `onGeometryChange` must fire **synchronously** from the model setters, before SwiftUI's first frame. `pointerCapture` separately stops a shrink from collapsing the island out from under a stationary pointer — see §2. |
 | Click-to-Spotlight (`openSpotlight()`) | `Sources/IslandView.swift` / `IslandModel.swift` | Removed in Phase 1 (`⌘Space` is the precedent); Spotlight avoidance / suppression while `SpotlightState.isOpen` is retained. |
-| 30 ms collapse on pointer exit, with an existing `isInteracting` escape hatch | `Sources/IslandController.swift:390-402` (`scheduleCollapse`), `:40` (`isInteracting`) | Collapse is deferred 30 ms and then re-checks three conditions: `!model.locksOpen`, `!isInteracting`, `!inHotZone(mouseLocation)`. Right-click `NSMenu`s, drag-ins and drag-outs all move the pointer outside `islandRect`, so `isInteracting` is the intended guard — it is **declared and already checked**, but nothing sets it yet. Phase 4 wires it up rather than adding a new flag. |
+| 30 ms collapse on pointer exit, with an existing `isInteracting` escape hatch | `Sources/IslandController.swift:566` (`scheduleCollapse`), `Sources/IslandModel.swift:49` (`isInteracting`) | Collapse is deferred 30 ms and then re-checks three conditions: `!model.locksOpen`, `!isInteracting`, `!inHotZone(mouseLocation)`. Right-click `NSMenu`s, drag-ins and drag-outs all move the pointer outside `islandRect`, so `isInteracting` is the guard. It is set by the drag path in `IslandController` and by `ShelfRowInput` while a context menu or drag-out is tracking — no second flag. |
 | `IslandPanel` overrides `canBecomeKey = true` **(Phase 2)** | `Sources/IslandController.swift:5-8` | `becomesKeyOnlyIfNeeded` is now `true`, so a click cannot take key status and swallow the synthetic `⌘V`. Auto-paste verified working by clicking a row and pasting into an editor. |
 
 Environment: Apple Silicon, macOS 26 (27.3 beta), screen 1512 × 982 @2x, notch
@@ -112,6 +112,15 @@ overshoot would push the shape past the window and clip it.
 `activePanel` setters rather than from a Combine sink, because the window has to
 be grown before SwiftUI renders the first frame of the animation.
 
+**A display change that removes the notch collapses rather than hides.** `observeScreens`
+used to call `panel.orderOut` alone, which left `expanded = true` while the window
+was invisible — so the Spotlight watch and the player poll kept running, which is
+the one rule this app does not break, and the island came back open when the notch
+returned. It now cancels any pending settle, collapses, then hides. The settle also
+resolves `targetScreen()` inside its work item rather than capturing the screen at
+scheduling time, so a display change mid-settle cannot apply the old screen's
+frame.
+
 **`pointerCapture` covers the case the window cannot.** Switching to a shorter
 panel lifts the island's bottom edge above a stationary pointer, which makes
 `inHotZone` false and collapses the island out from under the cursor. So
@@ -136,8 +145,21 @@ most-used panels moves nothing at all.
 The shelf is the one panel that is not a fixed size — see §5. Its height is
 `notchHeight + 38 + 31·items + 1`, capped at 260. A fixed 260 reserved room for six
 rows even when one file was dropped, which left a mostly empty card hanging under
-the notch. Adding or removing a file resizes the window the same way a panel
-switch does, so `IslandController` watches `shelf.$items` too.
+the notch.
+
+Adding or removing a file resizes the window the same way a panel switch does, and
+this is the case that shows why the trigger has to live in the model. **The
+controller resizing the window is not enough**: `islandSize` is read by the view to
+decide where the shape is heading, so the model also has to re-publish or SwiftUI
+never re-renders and the shape stays at the old height while the window grows. The
+first version subscribed in `IslandController` only, and the newly added row was
+clipped until some unrelated change re-rendered the view. `IslandModel` now
+subscribes to `shelf.$items`, sends `objectWillChange` and then calls
+`onGeometryChange`.
+
+**Anything that changes `islandSize` needs that pair**, not just the geometry call:
+`expanded` and `activePanel` get it from their `didSet` (SwiftUI is already
+watching those), and the shelf cannot, because it is a different object.
 
 ### Navigation
 
@@ -280,10 +302,10 @@ click row
 There is **no collapse-completion callback** — `collapse()` sets `expanded =
 false` and the `$expanded` sink updates state synchronously; SwiftUI's animation
 is cosmetic and invisible to the controller (and `ignoresMouseEvents` flips
-immediately even while the window waits ~0.4 s to shrink). Post ⌘V on the next
-runloop turn (`DispatchQueue.main.async`), treating ~80 ms as empirical: measure
-whether the target app still holds the old pasteboard contents, and lengthen only
-if it does.
+immediately even while the window waits ~0.4 s to shrink). Post ⌘V after `0.08 s`
+(`asyncAfter(deadline: .now() + 0.08)`, `IslandModel.deliverPaste`), treating the
+80 ms as empirical: measure whether the target app still holds the old pasteboard
+contents, and lengthen only if it does. A plain next-turn `async` was too early.
 
 ### Focus
 
@@ -340,7 +362,7 @@ The question a pattern answers is *"would I ever want to paste this back?"*, not
 auto-learn from what has been pasted: that hides things precisely until the first
 time they are needed, which is the one moment the panel would have helped.
 
-JSON file in Application Support, one regex per line. Status item gains
+`~/Library/Application Support/Dev Island/ignore-rules.txt`, one regex per line. Status item gains
 "Edit Ignore Rules" which opens it in the default editor. A missing file is
 created from the defaults below; an **empty** file means hide nothing, so
 deleting every line is a valid way to turn the list off.
@@ -420,6 +442,12 @@ never touches the real file.
 | Drop | `public.file-url` only; anything else is rejected so the drag animates back rather than being silently swallowed |
 | Drag-in | Opens the shelf, not the default panel; a cancelled drag restores the previous panel |
 | Drag-out | `NSView` + `NSDraggingSource`, 3 pt threshold, copy-only, icon as the drag preview — **verified by use** |
+
+**Not yet exercised by hand**, so treat as unproven rather than working: the row
+context menu (Open / Reveal / Copy Path / Remove), the hover `✕` removal, and
+scroll-wheel forwarding through `ShelfRowInput` when the list is taller than the
+panel. All three sit behind the same `NSView` that owns the mouse, which is the
+part of this panel most likely to bite.
 
 ### Design
 
@@ -711,7 +739,7 @@ re-checking — it may mask the browser session.
 | 5.5 | ~~Remove the now-playing strip, per-panel sizes, window resized at endpoints only~~ **done** | — |
 | 6 | Browser fallback, only if Phase 0 demands it | half day |
 
-Phases 1–3 are complete. The panel shell did turn each feature into a provider
+Phases 1–5.5 are complete. The panel shell did turn each feature into a provider
 plus a view: the clipboard and terminal panels each landed without touching the
 window controller.
 
