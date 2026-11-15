@@ -208,6 +208,22 @@ system-wide when it is closed; `⌃⌥↓` is the exception, registered for the 
 lifetime, because a closed island is exactly when it is needed. Its cost is written
 down next to the keys in `Sources/HotKeys.swift`.
 
+**Measured, macOS 26: a taken chord is invisible at registration.** `RegisterEventHotKey`
+returns `noErr` for a chord another process already holds — registering `⌃⌥↓` while a
+second copy of this app held it succeeded, as did registering the same chord twice in
+one process. It also succeeds for chords the system itself owns: `⌘Space` (Spotlight),
+`⌃↑` (Mission Control) and `⌘⇥` (the app switcher) all returned `noErr`.
+So a shortcut that is already spoken for fails at **delivery**, not at registration,
+and the two are indistinguishable from inside the app: there is no error to report and
+no state to show.
+
+This is why there is no "your shortcut is taken" warning in the status menu, and why
+one should not be added later — it could never fire. The remedy for a key that does
+not work is to change it, which means the open key would have to be rebindable; that
+work is parked rather than shipped, because its warning half rests on the same false
+premise. A passive `CGEventTap` would make the key work even when something else has
+claimed it, but that is a change to how the key is captured, not a fix to a message.
+
 Deliberately **no scroll-to-switch**: a clipboard list needs wheel scrolling,
 and a global scroll handler fights it.
 
