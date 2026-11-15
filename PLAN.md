@@ -202,9 +202,11 @@ unclaimed. The open key keeps a second modifier because, unlike the panel keys, 
 is registered for the whole process — a bare `⌥↓` would take next-paragraph away
 from every text editor all day.
 Carbon `RegisterEventHotKey`, not an `NSEvent` monitor — a global key monitor needs
-Accessibility and the island never becomes the active app. Registered only while
-the island is expanded (`Sources/HotKeys.swift`), so they cannot shadow anything
-system-wide when it is closed.
+Accessibility and the island never becomes the active app. The panel and cycle keys
+are registered only while the island is expanded, so they cannot shadow anything
+system-wide when it is closed; `⌃⌥↓` is the exception, registered for the process
+lifetime, because a closed island is exactly when it is needed. Its cost is written
+down next to the keys in `Sources/HotKeys.swift`.
 
 Deliberately **no scroll-to-switch**: a clipboard list needs wheel scrolling,
 and a global scroll handler fights it.

@@ -40,10 +40,10 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
   touches the real file.
 - **Quit** from the capsule in the menu bar. There is deliberately no login item.
 
-Only the four panel keys are tied to the island being open. Why the shortcuts sit on
-`⌃⌥` and `⌥` rather than `⌘1`–`⌘4` is recorded in `PLAN.md` §2 ("Navigation"):
-macOS and most apps claim ⌘-number and ⌃-number before a Carbon hotkey is consulted,
-so those never arrive.
+The panel and cycle keys are tied to the island being open; only the open key is
+armed all the time. Why the shortcuts sit on `⌃⌥` and `⌥` rather than `⌘1`–`⌘4` is
+recorded in `PLAN.md` §2 ("Navigation"): macOS and most apps claim ⌘-number and
+⌃-number before a Carbon hotkey is consulted, so those never arrive.
 
 ## Requirements
 

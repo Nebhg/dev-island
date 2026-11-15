@@ -202,10 +202,6 @@ final class IslandModel: ObservableObject {
         expanded = false
     }
 
-    func toggleExpanded() {
-        expanded ? collapse() : expand()
-    }
-
     /// Moves to the next or previous panel, wrapping at the ends.
     func cyclePanel(by step: Int) {
         let all = PanelID.allCases

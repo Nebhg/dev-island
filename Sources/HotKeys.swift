@@ -50,6 +50,15 @@ final class HotKeys {
     /// Cycling sits on ⌃⌥ arrows so it shares the open key's modifier and the hand
     /// is already on the arrow cluster. ⌥← / ⌥→ is word-wise text navigation and
     /// would be a bad trade even while the island is open.
+    ///
+    /// `⌥Tab` / `⌥⇧Tab` are the one chord here whose cost had to be weighed rather
+    /// than dodged: while the island is open they take Tab-with-Option from every
+    /// app — a tab character in an editor, focus-next-field in a form, and for some
+    /// people an Accessibility shortcut. The exposure is bounded by how long the
+    /// island stays up (normally the hover; a keyboard-opened island holds until the
+    /// pointer arrives), and Tab is what the hand reaches for when cycling, so they
+    /// are kept deliberately. The arrows above are the reason dropping them would
+    /// cost nothing but the habit.
     private static let keys: [Key] = [
         Key(slot: .panel1, keyCode: UInt32(kVK_ANSI_1), modifiers: UInt32(optionKey)),
         Key(slot: .panel2, keyCode: UInt32(kVK_ANSI_2), modifiers: UInt32(optionKey)),

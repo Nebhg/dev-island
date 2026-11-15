@@ -279,6 +279,10 @@ final class IslandController {
         if !panel.isVisible {
             FullscreenSupport.attach(panel)
             panel.orderFrontRegardless()
+            // Safer than relying on the `suppressed` branch above having run: the
+            // panel can be invisible with a stale click-through policy, and this
+            // path has no hover event to fix it later.
+            refreshMousePolicy()
         }
         model.expand()
         pinnedOpen = model.expanded
@@ -568,6 +572,10 @@ final class IslandController {
         // Opened by key or menu means "stay up" — do not let movement outside the
         // island close it before the hand gets there. Cleared as soon as the pointer
         // is inside, or when a click lands outside it.
+        //
+        // Deliberately returns before the Spotlight re-arm below: while the island is
+        // pinned nobody asked for it to track the pointer, and the `suppressed` flag
+        // is meaningless until `expandWithoutPointer` has been through it.
         if pinnedOpen {
             if inside || event.type == .leftMouseDown {
                 pinnedOpen = false
