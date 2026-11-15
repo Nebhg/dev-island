@@ -130,14 +130,6 @@ final class IslandController {
                 // `allCases`, not `contentPanels`: Settings is the fifth case, and
                 // that is what makes ⌥5 reach it.
                 self.model.selectPanel(PanelID.allCases[index])
-            case .step(let step):
-                // One registration, two meanings. The chord is the same; only the
-                // mode decides whether it cycles panels or moves the selected row.
-                if self.model.keyboardMode {
-                    self.model.moveSelection(by: step)
-                } else {
-                    self.model.cyclePanel(by: step)
-                }
             }
         }
         hotKeys.onToggle = { [weak self] in
@@ -402,8 +394,7 @@ final class IslandController {
         switch key {
         case .cyclePanel(let step): model.cycleListPanel(by: step)
         case .moveRow(let step): model.moveSelection(by: step)
-        case .paste: model.pasteSelection(copyOnly: false)
-        case .copy: model.pasteSelection(copyOnly: true)
+        case .paste: model.pasteSelection()
         // `collapse()` ends the mode as well, so this unregisters the keys.
         case .close: model.collapse()
         }

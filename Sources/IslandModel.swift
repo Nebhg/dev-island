@@ -266,14 +266,18 @@ final class IslandModel: ObservableObject {
         }
     }
 
-    /// Pastes the selected row; `copyOnly` is ⌥↩, for when the target app is not the
-    /// one that had focus.
+    /// Pastes the selected row.
+    ///
+    /// There is no copy-only variant: `↩` already writes the row to the pasteboard
+    /// before pasting it, so a second key for "copy instead" only restated what the
+    /// first one does. ⌥-click on a row still copies without pasting, for the mouse —
+    /// that path exists because the mouse has no Return to press.
     ///
     /// The teardown is explicit rather than left to `collapse()`. The keys are only
     /// safe because their lifetime is bounded, and reaching `endKeyboardMode` three
     /// calls deep inside a function whose job is pasting is not a guarantee — it is a
     /// coincidence that happens to hold today.
-    func pasteSelection(copyOnly: Bool) {
+    func pasteSelection() {
         guard let selection = listSelection, let row = selectedRowID else {
             // Nothing selected, or an empty list: nothing to paste, but the mode still
             // has to end or the keys stay registered.
@@ -281,7 +285,7 @@ final class IslandModel: ObservableObject {
             return
         }
         endKeyboardMode()
-        paste(panel: selection.panel, rowID: row, autoPaste: !copyOnly)
+        paste(panel: selection.panel, rowID: row, autoPaste: true)
     }
 
     /// The selected row's id, or nil when there is not one: no row selected, or an
@@ -484,21 +488,16 @@ final class IslandModel: ObservableObject {
         }
     }
 
-    /// Moves to the next or previous panel, wrapping at the ends.
-    func cyclePanel(by step: Int) {
-        let all = PanelID.allCases
-        guard let index = all.firstIndex(of: activePanel) else { return }
-        let next = (index + step + all.count) % all.count
-        selectPanel(all[next])
-    }
-
     /// Moves to the next or previous **list** panel, wrapping between the two.
     ///
-    /// Separate from `cyclePanel`, which walks every panel including the three with no
-    /// rows. This is what the mode's arrows use, and it has to stay on lists: reaching
-    /// Shelf or Music would end the mode, which is the opposite of what an arrow press
-    /// is asking for. Descending from `cyclePanel` would also make the destination
-    /// depend on `PanelID`'s declaration order, which is a display concern.
+    /// The only cycling left. It does not walk every panel, and cannot: reaching Shelf
+    /// or Music would end the mode, which is the opposite of what an arrow press is
+    /// asking for. Deriving it from `PanelID.allCases` would also make the destination
+    /// depend on declaration order, which is a display concern.
+    ///
+    /// This replaced `cyclePanel`, which walked all five panels for the `⌃⌥←/→` and
+    /// `⌥Tab` chords. Both are gone: panels are reachable by number at any time, and by
+    /// arrow once the mode is armed.
     func cycleListPanel(by step: Int) {
         let lists: [PanelID] = [.clipboard, .terminal]
         guard let index = lists.firstIndex(of: activePanel) else { return }

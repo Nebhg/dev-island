@@ -53,8 +53,6 @@ final class HotKeys {
     /// only it knows whether the island is in keyboard mode.
     enum PanelKey {
         case select(Int)
-        /// `⌃⌥←/→`. Cycles panels normally, moves the selected row in keyboard mode.
-        case step(Int)
     }
 
     /// What a mode-group chord means. Only live while `modeKeys` is installed.
@@ -69,7 +67,6 @@ final class HotKeys {
         /// `↑` / `↓`. Previous or next row in the list on screen.
         case moveRow(Int)
         case paste
-        case copy
         case close
     }
 
@@ -102,22 +99,14 @@ final class HotKeys {
         case panel3 = 3
         case panel4 = 4
         case panel5 = 5
-        case previous = 6
-        case next = 7
-        case tabForward = 8
-        case tabBackward = 9
-        case clipboard = 10
+        case clipboard = 6
+        case left = 7
+        case right = 8
+        case up = 9
+        case down = 10
         case paste = 11
         case pasteKeypad = 12
-        case copy = 13
-        case close = 14
-        // Appended rather than inserted: the six chords above are removed by the
-        // commit that follows this one, and renumbering twice would make this diff
-        // unreadable to no purpose.
-        case left = 15
-        case right = 16
-        case up = 17
-        case down = 18
+        case close = 13
     }
 
     private struct Key {
@@ -126,8 +115,9 @@ final class HotKeys {
         let modifiers: UInt32
     }
 
-    /// `⌥1`–`⌥5` jump straight to a panel, in `PanelID.allCases` order; `⌃⌥←/→`
-    /// cycle; `⌃⌥↓` opens the island.
+    /// `⌥1`–`⌥5` jump straight to a panel, in `PanelID.allCases` order. `⌃⌥↓` opens
+    /// the island and `←`/`→` cycle panels once it is being driven from the keyboard;
+    /// neither lives in this group.
     ///
     /// `⌘1`–`⌘5` is the obvious choice and the wrong one: macOS and most apps claim
     /// `⌘`-number and `⌃`-number first (tab switching, Spaces), and those win before
@@ -136,28 +126,20 @@ final class HotKeys {
     /// The same mistake in reverse — `⌥⌘1`–`⌥⌘5` — was tried and withdrawn for the
     /// same reason.
     ///
-    /// Cycling sits on `⌃⌥` arrows so it shares the open key's modifier and the hand
-    /// is already on the arrow cluster. `⌥← / ⌥→` is word-wise text navigation and
-    /// would be a bad trade even while the island is open.
-    ///
-    /// `⌥Tab` / `⌥⇧Tab` are the one chord here whose cost had to be weighed rather
-    /// than dodged: while the island is open they take Tab-with-Option from every
-    /// app — a tab character in an editor, focus-next-field in a form, and for some
-    /// people an Accessibility shortcut. The exposure is bounded by how long the
-    /// island stays up (normally the hover; a keyboard-opened island holds until the
-    /// pointer arrives), and Tab is what the hand reaches for when cycling, so they
-    /// are kept deliberately. The arrows above are the reason dropping them would
-    /// cost nothing but the habit.
+    /// What used to be here is worth recording, because both looked reasonable:
+    /// `⌃⌥←/→` for cycling and `⌥Tab`/`⌥⇧Tab` as an alias. The arrows took three keys
+    /// to change panel and had to be overloaded — the same chord cycled panels or
+    /// moved the selected row depending on a mode the user could not see. The Tab
+    /// alias was the one chord in the file whose cost had been weighed rather than
+    /// dodged: while the island was open it took Option-Tab from every app. Both are
+    /// gone. Panels are reachable by number at any time, and by arrow once the mode is
+    /// armed, which is the only state where a bare arrow is already spoken for.
     private static let keys: [Key] = [
         Key(slot: .panel1, keyCode: UInt32(kVK_ANSI_1), modifiers: UInt32(optionKey)),
         Key(slot: .panel2, keyCode: UInt32(kVK_ANSI_2), modifiers: UInt32(optionKey)),
         Key(slot: .panel3, keyCode: UInt32(kVK_ANSI_3), modifiers: UInt32(optionKey)),
         Key(slot: .panel4, keyCode: UInt32(kVK_ANSI_4), modifiers: UInt32(optionKey)),
-        Key(slot: .panel5, keyCode: UInt32(kVK_ANSI_5), modifiers: UInt32(optionKey)),
-        Key(slot: .previous, keyCode: UInt32(kVK_LeftArrow), modifiers: UInt32(controlKey | optionKey)),
-        Key(slot: .next, keyCode: UInt32(kVK_RightArrow), modifiers: UInt32(controlKey | optionKey)),
-        Key(slot: .tabForward, keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey | shiftKey)),
-        Key(slot: .tabBackward, keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey))
+        Key(slot: .panel5, keyCode: UInt32(kVK_ANSI_5), modifiers: UInt32(optionKey))
     ]
 
     /// `⌃⌥↓` toggles the island.
@@ -172,14 +154,17 @@ final class HotKeys {
         modifiers: UInt32(controlKey | optionKey)
     )
 
-    /// Row actions, while the keyboard selection is active.
+    /// Navigation and dismissal, while the island is being driven from the keyboard.
     ///
-    /// Bare `↩` and `⎋` are the widest interception in the app: they stop reaching
-    /// the frontmost app. That is affordable only because the mode is entered
-    /// deliberately by a chord and ends on the first thing that means "done" —
-    /// paste, copy, escape, panel change, outside click or app switch. The bare
-    /// arrows the earlier design also took are **not** here: row movement shares
-    /// `⌃⌥←/→` with cycling, so it costs no registration at all.
+    /// This is the widest interception in the app: while installed, `← → ↑ ↓ ↩ ⌤ ⎋`
+    /// stop reaching the frontmost app. That is affordable only because the mode is
+    /// entered deliberately and ends on the first thing that means "done" — paste,
+    /// escape, panel change, outside click, app switch or collapse.
+    ///
+    /// Hovering the island never installs them. That distinction is the whole reason
+    /// the arrows can be bare: a pointer resting near the notch is not a request to
+    /// take the arrow keys off every other app, and a hovered island has no way to say
+    /// so.
     private static let modeKeys: [Key] = [
         Key(slot: .left, keyCode: UInt32(kVK_LeftArrow), modifiers: 0),
         Key(slot: .right, keyCode: UInt32(kVK_RightArrow), modifiers: 0),
@@ -187,7 +172,6 @@ final class HotKeys {
         Key(slot: .down, keyCode: UInt32(kVK_DownArrow), modifiers: 0),
         Key(slot: .paste, keyCode: UInt32(kVK_Return), modifiers: 0),
         Key(slot: .pasteKeypad, keyCode: UInt32(kVK_ANSI_KeypadEnter), modifiers: 0),
-        Key(slot: .copy, keyCode: UInt32(kVK_Return), modifiers: UInt32(optionKey)),
         Key(slot: .close, keyCode: UInt32(kVK_Escape), modifiers: 0)
     ]
 
@@ -318,10 +302,6 @@ final class HotKeys {
             // `PanelID.allCases`. Settings is the fifth case, which is what makes
             // ⌥5 reach it.
             onPanelKey?(.select(Int(slot.rawValue) - 1))
-        case .previous, .tabForward:
-            onPanelKey?(.step(-1))
-        case .next, .tabBackward:
-            onPanelKey?(.step(1))
         case .toggle:
             onToggle?()
         case .clipboard:
@@ -336,8 +316,6 @@ final class HotKeys {
             onModeKey?(.moveRow(1))
         case .paste, .pasteKeypad:
             onModeKey?(.paste)
-        case .copy:
-            onModeKey?(.copy)
         case .close:
             onModeKey?(.close)
         }

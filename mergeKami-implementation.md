@@ -11,8 +11,8 @@ incomplete and this file is the correction.
 |---|---|---|
 | 1 | `Make the keyboard mode a mode, not a selection` | committed `e0bd007` — typechecks |
 | 2 | `Register the mode's keys against the mode` | **built, uncommitted** — typechecks |
-| 3 | `Cycle the two list panels with the arrows` | **built, uncommitted** — typechecks |
-| 4 | `Drop the cycle chords and the Tab aliases` | not started |
+| 3 | `Cycle the two list panels with the arrows` | committed `b917550` — typechecks |
+| 4 | `Drop the cycle chords and the Tab aliases` | **built, uncommitted** — typechecks |
 | 5 | `Arm the island from the toggle key` | not started |
 | 6 | `Document the keyboard layer that exists` | not started |
 
@@ -260,6 +260,88 @@ list moves one row per press and this needs a timer.
   separate chords, but both paths are live until phase 4.
 - `⌥↩` still copies from the keyboard; phase 4 removes it with the `copy` slot.
 - `⌃⌥↓` still closes an expanded island rather than arming it (phase 5).
+
+### Open, carried forward
+
+Auto-repeat unmeasured; GIFs undecided; `⌃⌘V` no longer restores the panel it detoured
+from.
+
+---
+
+## Phase 4 — drop the cycle chords and the Tab aliases
+
+**Plan:** §12 commit 4 — `Slot` renumbered, `←→↑↓` in, `⌃⌥←/→` and `⌥Tab` out, comments
+rewritten.
+**Actually changed:** `Sources/HotKeys.swift`, `Sources/IslandController.swift`,
+`Sources/IslandModel.swift`.
+
+### What was done
+
+| removed | replaces it |
+|---|---|
+| `Slot.previous`, `.next` (`⌃⌥←`, `⌃⌥→`) | `.left`, `.right` |
+| `Slot.tabForward`, `.tabBackward` (`⌥⇧Tab`, `⌥Tab`) | `.up`, `.down` |
+| `Slot.copy` (`⌥↩`) | nothing — `↩` already writes the pasteboard |
+| `PanelKey.step(Int)` | `ModeKey.cyclePanel(Int)` / `.moveRow(Int)` |
+| `IslandModel.cyclePanel(by:)` | `cycleListPanel(by:)` |
+| `pasteSelection(copyOnly:)` | `pasteSelection()` |
+
+`Slot` renumbered to a contiguous 0–13:
+
+| | | | |
+|---|---|---|---|
+| 0 toggle | 1–5 panel1–5 | 6 clipboard | 7 left |
+| 8 right | 9 up | 10 down | 11 paste |
+| 12 pasteKeypad | 13 close | | |
+
+The `keys` group is now five entries — `⌥1`–`⌥5` and nothing else. Its doc comment was
+rewritten to record what used to be there and why both are gone, rather than to keep
+arguing for them.
+
+### Where reality differs from the plan
+
+**1. `⌥↩` went in this commit, not its own.** §3 lists it as removed but §12 never
+assigns it to a phase. It belongs here: it is the `copy` slot, and the `copy` slot is
+part of the renumber. Leaving it for later would have meant renumbering twice.
+
+**2. §8 said to *delete* the `⌥Tab` justification paragraph. I replaced it instead.**
+The plan's objection was that the paragraph "argues for a chord that no longer exists".
+That is right, and it was the paragraph's purpose, not its wording. The replacement
+argues the opposite — why the chord went — in the same place, so the next person
+reading `keys` finds out why the obvious aliases are missing rather than adding them
+back. Same for the old paragraph in `modeKeys` that explained why the arrows were *not*
+registered; it now explains why they are.
+
+**3. `cyclePanel(by:)` is gone, so nothing walks all five panels any more.** Phase 3
+kept it for `⌃⌥←/→`; with those removed it has no caller. Panels are reachable by
+number at any time, and by arrow once the mode is armed. Verified by typecheck — an
+unused private method would not fail, so this is a deliberate deletion rather than a
+compiler-visible one.
+
+**4. `pasteSelection()` no longer takes `copyOnly`.** `↩` writes the row to the
+pasteboard on its way to pasting, so a "copy instead" key only restated it. ⌥-click
+still copies without pasting (`HistoryPanel.swift:180-181`), which is the path that
+needs it: a mouse has no Return to press.
+
+### Verification
+
+```
+swiftc -typecheck … → clean (exit 0)
+```
+
+`grep -rn "cyclePanel(by\|\.step(\|tabForward\|tabBackward\|kVK_Tab\|copyOnly"` returns
+only `HistoryPanel.swift:180-181`, the mouse path that is supposed to keep it.
+
+**This is the first commit where the plan's key set is fully in place.** What is still
+missing is the way in: `⌃⌥↓` still closes an expanded island rather than arming it, so
+the only route into the mode is `⌃⌘V` on the clipboard.
+
+### Known-broken after phase 4, by design
+
+- `⌃⌥↓` closes rather than arms (phase 5).
+- There is no arrow path to Shelf or Music at all now. `⌥3`/`⌥4` reach them; both end
+  the mode.
+- `⌥5` reaches Settings and ends the mode, because Settings is not a list.
 
 ### Open, carried forward
 
