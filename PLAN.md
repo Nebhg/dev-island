@@ -981,6 +981,7 @@ re-check them the same way.
 | `ISLAND_EXPANDED=1` | Opens the island and sets `model.locksOpen = true`, so it stays open and can be captured |
 | `ISLAND_PANEL=music\|clipboard\|terminal\|shelf` | Selects the panel before first paint |
 | `ISLAND_RENDER=<path>` + `ISLAND_RENDER_STATE=expanded\|playing\|wings` + `ISLAND_RENDER_PANEL=…` | Renders a static preview to PNG via `ImageRenderer` |
+| `ISLAND_DATA_DIR=<path>` | Sandboxes **every** store and the single-instance lock: clipboard history, shelf, ignore rules, `instance.lock`. Nothing under the real Application Support directory is read or written, which is how the time windows were exercised against invented data without risking real history. Also gives the test instance its own lock file, so it can run beside a real one |
 | `ISLAND_HISTORY=<path>` | Point the terminal panel at a fixture instead of `~/.zsh_history`, so window filters and parsing can be exercised without touching real shell history |
 | `ISLAND_DRAG_PROBE=1` | Logs every `.leftMouseDragged` with both gate inputs (`content`, `count`, `base`, `inside`, `types`) to stderr. The only reliable way to inspect drag events — a standalone binary launched from a terminal does not inherit the app's TCC grant and sees nothing |
 
