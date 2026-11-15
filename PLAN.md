@@ -21,7 +21,7 @@ review; §11 records signing and installation.
 | 6 — media transport (§7) | done, verified with a browser |
 | 7 — browser artwork in a title-less diff | done |
 | 8 — paste confirmation | pending |
-| 9 — aspect-driven music layout | done, verified live |
+| 9 — one music-panel size, aspect-fitted tile | done, verified live |
 | 10 — video placeholder glyph | pending, maybe unnecessary |
 | 11 — view dedup (review 1B) | pending |
 
@@ -145,7 +145,7 @@ The `32 pt` physical notch, the panel bar in that band, and padding consume
 | Clipboard | 520 × 320 | wide rows: text, source and age on one line; FREQUENT chips stop wrapping |
 | Terminal | 520 × 320 | long commands stop truncating |
 | Shelf | 440 × 102–260 | **height follows the file count**; 102 with one file, capped at 260 before it scrolls |
-| Music | 440 × 190, or 520 × 190 for video | square album art keeps 440; a 16:9 frame widens to 520 so the thumbnail is not cropped (§6) |
+| Music | 520 × 190 | one size for every source; the artwork tile follows the image's aspect so nothing is cropped (§6) |
 
 Clipboard and terminal are deliberately identical, so switching between the two
 most-used panels moves nothing at all.
@@ -781,31 +781,31 @@ stretching to the panel's full height and leaving the artwork floating. The pane
 is `440 × 190`: 132 pt of artwork plus scrub, times and a 28 pt transport row
 needs ~150 pt of content, and 310 was mostly empty.
 
-### Two layouts, chosen by the artwork
+### One size, aspect-fitted tile
 
-A 16:9 video frame was centre-cropped into the square 132 pt tile, so a browser
-session showed a title over a slice of its thumbnail. Now:
+The panel is **520 × 190 for everything** — the same width the list panels use —
+and only the artwork tile changes shape:
 
-| Artwork | Tile | Panel |
-| --- | --- | --- |
-| Square (aspect ≤ 1.2) — album art | 132 × 132 | 440 × 190 |
-| Wide (aspect > 1.2) — a video frame | height 132, width `132 × aspect`, capped at 236 | 520 × 190 |
+| Artwork | Tile |
+| --- | --- |
+| Square (aspect ≤ 1.2) — album art | 132 × 132 |
+| Wide (aspect > 1.2) — a video frame | height 132, width `132 × aspect`, capped at 236 |
 
-**The image decides, not the source.** There is no reliable way to tell a video
-from a song: Spotify publishes `mediaType: …TypeAudio`, a browser playing YouTube
-omits `mediaType` entirely, and a YouTube music video and a YouTube video are the
-same thing to the system. Album art is square and a frame is not. A song posted as
-a video therefore shows as a video, which is right — that is what its artwork is.
+A two-layout version was built first — 440 for square art, 520 for wide — and then
+removed. It looked clever and behaved badly: **YouTube publishes a 16:9 thumbnail
+for every video, including music videos**, so a music video and a lecture pulled
+the same lever, and the island changed width every time the track changed. Watching
+it move on each track change is what killed it. One panel size, always; the window
+now never depends on what is playing.
 
-The threshold is 1.2 rather than "is it 16:9" so a 4:3 video keeps its shape (176 pt
-tile) instead of losing a quarter of itself to a square crop. The 236 cap stops a
-panorama eating the text column.
+The image, not the source, still decides the *tile*: album art is square and a frame
+is not, and a square cover in a wide box would lose ~45% of itself. That is the only
+thing the artwork's shape controls.
 
-Consequence: **the window changes width when the track changes**, using the same
-endpoint-resize machinery as a panel switch (§2). A late thumbnail therefore costs
-one extra ~0.4 s resize — metadata arrives first and widens nothing, then the
-artwork lands and the panel widens. Phase 7 shortened that gap but a browser
-genuinely sends artwork a moment later.
+Worth writing down, because it makes "detect a music video" a non-problem: a YouTube
+music video's thumbnail is a 16:9 composite with the album art on a colour field.
+There is nothing to classify — that *is* the artwork, and showing it whole is the
+correct outcome.
 
 Not proposed: tap-artwork-to-flip. No value, extra state.
 
@@ -921,7 +921,7 @@ the fastest way to inspect what a player is publishing:
 | 6 | ~~Media transport: vendored `mediaremote-adapter` built from source, streamed through `MediaStream`~~ **done and verified with a real browser session** | — |
 | 7 | ~~Artwork arriving in a title-less diff was dropped~~ **done** — patches now applied; browser thumbnails work | — |
 | 8 | Paste confirmation in the closed notch, toggleable from the clipboard header (§3) | ~1 hour |
-| 9 | ~~Aspect-driven music layout so a video thumbnail is not cropped~~ **done, verified with a live session** | — |
+| 9 | ~~One music-panel size; the tile follows the artwork's aspect so a thumbnail is not cropped~~ **done, verified with a live session** | — |
 | 10 | Video placeholder glyph for sessions with no artwork — only if a session ever publishes none (§7) | ~30 min, maybe unnecessary |
 | 11 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
 
