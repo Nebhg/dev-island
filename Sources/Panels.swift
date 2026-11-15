@@ -16,6 +16,14 @@ enum PanelID: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Panels that hold a list the keyboard can drive.
+    ///
+    /// The other three — Shelf, Music, Settings — have no rows, so the mode's bare
+    /// keys would have nothing to act on and arming there would take them from every
+    /// app with no highlight to show for it. The mode is armed on these two and ends
+    /// when the panel changes to anything else.
+    var isList: Bool { self == .clipboard || self == .terminal }
+
     var title: String {
         switch self {
         case .music: "Music"

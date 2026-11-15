@@ -21,6 +21,7 @@ final class IslandModel: ObservableObject {
             // Settings is a detour, never the panel to come back to.
             guard activePanel != .settings else { return }
             lastContentPanel = activePanel
+            if activePanel.isList { lastListPanel = activePanel }
             // Previews build throwaway models; they must not overwrite the
             // user's real last panel.
             if !PreviewMode.active {
@@ -31,6 +32,10 @@ final class IslandModel: ObservableObject {
 
     /// The last panel that was not Settings; what closing on Settings goes back to.
     private var lastContentPanel = PanelID.clipboard
+
+    /// The last panel that was a list; where the keyboard lands when the panel it was
+    /// otherwise about to open has no rows to drive.
+    private var lastListPanel = PanelID.clipboard
 
     /// Hides the per-panel controls — the history windows and the Autopaste pill —
     /// and the Frequent row, leaving each history panel as just its list. The
@@ -69,6 +74,20 @@ final class IslandModel: ObservableObject {
 
     /// What `expand()` is about to show.
     var panelOnOpen: PanelID { reopensLastPanel ? activePanel : defaultPanel }
+
+    /// Where the keyboard lands when it is opened from the toggle key.
+    ///
+    /// `panelOnOpen` when that is a list, because opening where the user last was is
+    /// the point of `reopensLastPanel`. Otherwise the last panel that had rows: an
+    /// island opened into keyboard mode on Music would take the arrows and offer
+    /// nothing for them to move, which reads as the keys having been stolen.
+    var keyboardLandingPanel: PanelID {
+        // An island that is already up arms where it is: the user is looking at a
+        // panel, and moving them off it would be a change they did not ask for. A
+        // closed island has not chosen yet, so it follows `panelOnOpen`.
+        let target = expanded ? activePanel : panelOnOpen
+        return target.isList ? target : lastListPanel
+    }
 
     /// Set by a provider when its panel is degraded — e.g. terminal history
     /// needing `setopt INC_APPEND_HISTORY`. Rendered as a strip above content.
@@ -213,7 +232,7 @@ final class IslandModel: ObservableObject {
     /// cannot act would take those keys from every app and offer nothing in return —
     /// no highlight, no paste, no visible reason the arrows stopped arriving.
     func beginKeyboardMode(on panel: PanelID) {
-        guard panel == .clipboard || panel == .terminal else { return }
+        guard panel.isList else { return }
         // Panel before flag: whoever observes `keyboardMode` to register keys must
         // not see the mode on while the island is still showing the old panel.
         activePanel = panel
@@ -335,7 +354,7 @@ final class IslandModel: ObservableObject {
     /// on the way to the other one is an ordinary move, not a reason to drop the keys.
     private func retargetSelection(to panel: PanelID) {
         guard keyboardMode else { return }
-        guard panel == .clipboard || panel == .terminal else {
+        guard panel.isList else {
             endKeyboardMode()
             return
         }
@@ -467,9 +486,14 @@ final class IslandModel: ObservableObject {
 
     // MARK: - Presentation
 
-    func expand() {
+    /// Opens the island.
+    ///
+    /// `panel` overrides what `panelOnOpen` would choose, which exists for the keyboard:
+    /// the mode has to land on a list, and setting `activePanel` afterwards would open
+    /// on the old panel for a frame and then jump. Nil keeps the hover behaviour.
+    func expand(on panel: PanelID? = nil) {
         guard !expanded, !suppressed else { return }
-        activePanel = panelOnOpen
+        activePanel = panel ?? panelOnOpen
         expanded = true
     }
 

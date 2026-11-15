@@ -12,8 +12,8 @@ incomplete and this file is the correction.
 | 1 | `Make the keyboard mode a mode, not a selection` | committed `e0bd007` — typechecks |
 | 2 | `Register the mode's keys against the mode` | **built, uncommitted** — typechecks |
 | 3 | `Cycle the two list panels with the arrows` | committed `b917550` — typechecks |
-| 4 | `Drop the cycle chords and the Tab aliases` | **built, uncommitted** — typechecks |
-| 5 | `Arm the island from the toggle key` | not started |
+| 4 | `Drop the cycle chords and the Tab aliases` | committed `0769198` — typechecks |
+| 5 | `Arm the island from the toggle key` | **built, uncommitted** — typechecks |
 | 6 | `Document the keyboard layer that exists` | not started |
 
 Nothing has been built into an app, installed, or run. Every "works" below means
@@ -347,3 +347,91 @@ the only route into the mode is `⌃⌘V` on the clipboard.
 
 Auto-repeat unmeasured; GIFs undecided; `⌃⌘V` no longer restores the panel it detoured
 from.
+
+---
+
+## Phase 5 — arm the island from the toggle key
+
+**Plan:** §12 commit 5 — three-state `⌃⌥↓`, `⌃⌘V` as the same mode.
+**Actually changed:** `Sources/Panels.swift`, `Sources/IslandModel.swift`,
+`Sources/IslandController.swift`.
+
+### What was done
+
+- `PanelID.isList` — the predicate had been written out three times.
+- `IslandModel.lastListPanel`, updated in `activePanel.didSet` alongside
+  `lastContentPanel`.
+- `IslandModel.keyboardLandingPanel` — where the mode should arm.
+- `IslandModel.expand(on:)` — optional landing override.
+- `IslandController.expandWithoutPointer(on:)` — passes it through.
+- `toggleExpanded()` is now three-state; `armKeyboardMode()` is the shared arm step.
+- `toggleKeyboardSelection()` → `openKeyboardMode()`, and it passes `.clipboard`.
+
+### The state machine
+
+| island | `⌃⌥↓` |
+|---|---|
+| closed | open on `keyboardLandingPanel`, arm |
+| open, not armed | arm where it is |
+| armed | close |
+
+Opening on the landing panel *before* the window is ordered is the reason for
+`expand(on:)`. Arming after `expand()` would have set `activePanel` twice in one turn —
+once to `panelOnOpen`, then to the landing — and the geometry callback runs from that
+setter, so the island would have animated to the wrong panel first.
+
+### Where reality differs from the plan
+
+**1. `keyboardLandingPanel` prefers the panel already on screen.** The plan said "arm,
+and jump to the last list panel" for a non-list panel, without saying what an island
+already up on the clipboard should do. It should stay: the user is looking at it.
+So the landing is `expanded ? activePanel : panelOnOpen`, falling back to
+`lastListPanel` only when that is not a list.
+
+**2. `lastListPanel` is new state the plan did not mention.** §5 says "jump to the last
+list panel" as though one existed; nothing did. It is four lines, and without it the
+fallback would be a hardcoded `.clipboard`, which would send `⌃⌥↓` to the clipboard
+even for someone who only ever uses the terminal list.
+
+**3. `expandWithoutPointer` had to name its parameter `landing`.** The controller
+already has a stored `panel` of type `IslandPanel`, and the compiler read the new
+parameter as shadowing it. Caught by typecheck, not by review.
+
+**4. The status menu still does not arm.** `App.swift:207` calls
+`expandWithoutPointer()` with no argument, so "Open Island" opens without taking any
+keys. That is deliberate and now load-bearing: choosing a menu item is not asking to
+drive the island from the keyboard, and a menu that silently took the arrow keys would
+be the worst possible place to discover the mode.
+
+### Verification
+
+```
+swiftc -typecheck … → clean (exit 0)
+```
+
+Not verified at runtime. The three-state toggle is the change most likely to feel wrong
+in the hand, and there is no way to know from here whether "second press arms" reads as
+progress or as nothing happening — arming is only visible as a row highlight, and on a
+panel already showing a row there is nothing to see at all.
+
+### The `⌃⌘V` restore question is now live
+
+Phase 1 deleted `panelBeforeSelection`, so `⌃⌘V` no longer returns to the panel it
+detoured from. With `⌃⌥↓` now arming on the last-used panel, the two paths disagree:
+
+- `⌃⌥↓` on Music → lands on the last list, **and that becomes `lastPanel`**.
+- `⌃⌘V` on Music → lands on clipboard, **and that becomes `lastPanel`**.
+- Neither returns you to Music.
+
+Both are now persistent panel changes caused by a keystroke. This is the item to decide
+before phase 6, because whatever the README says about reopening the last panel has to
+match what actually happens.
+
+### Known-broken after phase 5, by design
+
+- Documentation still describes `⌃⌥←/→` and `⌥Tab` (phase 6).
+- The GIF captions still name the retired chord (phase 6).
+
+### Open, carried forward
+
+Auto-repeat unmeasured; GIFs undecided; the restore question above.

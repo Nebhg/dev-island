@@ -136,7 +136,7 @@ final class IslandController {
             self?.toggleExpanded()
         }
         hotKeys.onClipboard = { [weak self] in
-            self?.toggleKeyboardSelection()
+            self?.openKeyboardMode()
         }
         hotKeys.onModeKey = { [weak self] key in self?.handleModeKey(key) }
         hotKeys.installToggle()
@@ -297,13 +297,37 @@ final class IslandController {
         refreshMousePolicy()
     }
 
-    /// ⌃⌥↓.
+    /// `⌃⌥↓`, the only way in from the keyboard.
+    ///
+    /// Three states, because arming is now a separate event from opening: an island
+    /// the pointer is already holding open is not a request to close it, and pressing
+    /// the key to say "drive this from the keyboard" used to shut the window instead.
+    ///
+    /// - closed → open on the panel the keyboard can land on, and arm
+    /// - open, not armed → arm where it is
+    /// - armed → close
     func toggleExpanded() {
-        if model.expanded {
+        guard model.expanded else {
+            expandWithoutPointer(on: model.keyboardLandingPanel)
+            armKeyboardMode()
+            return
+        }
+        if model.keyboardMode {
             model.collapse()
         } else {
-            expandWithoutPointer()
+            armKeyboardMode()
         }
+    }
+
+    /// Puts the mode on the island that is already open, on the panel it should land
+    /// on. `beginKeyboardMode` is what ends up setting `activePanel`, so a hovered
+    /// island on Music moves to the last list rather than arming over nothing.
+    private func armKeyboardMode() {
+        // `expandWithoutPointer` can refuse — Spotlight is open, or `expand()` was
+        // blocked — and arming a mode on a window that never appeared would register
+        // bare keys with nothing on screen to exit from.
+        guard model.expanded else { return }
+        model.beginKeyboardMode(on: model.keyboardLandingPanel)
     }
 
     /// Opens the island from the toggle key or the status menu.
@@ -321,7 +345,7 @@ final class IslandController {
     /// Spotlight open is an early return rather than a fall-through: `expand()` is
     /// blocked by `suppressed` while the panel itself has no such guard, so ordering
     /// it forward would leave an invisible window in front of Spotlight.
-    func expandWithoutPointer() {
+    func expandWithoutPointer(on landing: PanelID? = nil) {
         guard !SpotlightState.isOpen else { return }
         if model.suppressed {
             model.suppressed = false
@@ -338,7 +362,7 @@ final class IslandController {
             // path has no hover event to fix it later.
             refreshMousePolicy()
         }
-        model.expand()
+        model.expand(on: landing)
         model.pinnedOpen = model.expanded
         // Nothing asked for should be undone by a collapse that was already queued
         // from an earlier pointer exit.
@@ -371,22 +395,24 @@ final class IslandController {
 
     // MARK: - Keyboard selection
 
-    /// The clipboard shortcut: opens the island on the clipboard with a row
-    /// selected, or closes it if that mode is already on.
+    /// `⌃⌘V`: opens the island on the clipboard with a row selected, or closes it if
+    /// that mode is already on.
+    ///
+    /// The same mode `⌃⌥↓` arms, with the panel forced. There is no separate picker
+    /// state and no clipboard session — this is only a different landing panel, which
+    /// is why it costs no second set of keys.
     ///
     /// Closing rather than only dropping the selection matters: `expandWithoutPointer`
     /// pins the island, so a shortcut that left it open would leave it stuck open with
     /// nothing driving it.
-    private func toggleKeyboardSelection() {
+    private func openKeyboardMode() {
         if model.keyboardMode, model.expanded {
             model.collapse()
             return
         }
-        expandWithoutPointer()
+        expandWithoutPointer(on: .clipboard)
         // Spotlight open, or `expand()` refused: there is nothing to select from.
         guard model.expanded else { return }
-        // The clipboard shortcut lands on the clipboard. It arms the same mode the
-        // toggle key arms — there is no separate "picker".
         model.beginKeyboardMode(on: .clipboard)
     }
 
