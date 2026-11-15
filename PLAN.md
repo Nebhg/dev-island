@@ -42,7 +42,7 @@ These matter because they invalidate some obvious approaches.
 | `expand()` selects `defaultPanel` before flipping `expanded` **(found in Phase 4)** | `Sources/IslandModel.swift:86-90` | Anything wanting a specific panel on expand must select it **after** calling `expand()`; selecting first is silently overwritten. This cost a drop target: the shelf was selected during a drag, `expand()` replaced it with the default panel, and the drop landed on a panel with no drop handler. |
 | No SPM, no dependencies — plain `swiftc` | `build.sh` | No GRDB/Realm. Persistence must be `Codable` JSON, capped and debounced. |
 | `~/.zsh_history`: ~1,300 lines and growing, **no timestamps**, `\` continuations, non-UTF-8 bytes | measured | Recency must come from file position, not time. The parser must join continuations and decode lossily. `INC_APPEND_HISTORY` is now set in `~/.zshrc`, so the file is written per command rather than on shell exit. `EXTENDED_HISTORY` is still off. |
-| `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift:383` | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay permanently interactive as `NSDraggingDestination`, while the `249 pt` playing chin stays click-through. Phase 4 depends on this. |
+| `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift:383` | Policy is `!expanded` — the closed window is only the camera cutout, so it stays interactive as the `NSDraggingDestination` for dropping a file at the notch. It used to branch on `isPlaying`, because the playing chin covered live menu bar; the chin is gone (macOS draws the live activity itself, §6), so there is nothing to click through. During a drag session `mouseMoved` does not fire, which is why the closed window must be interactive rather than hit-tested on movement. |
 | Hover monitors cover `.mouseMoved`, `.leftMouseDown`, `.leftMouseDragged`, `.leftMouseUp` **(Phase 4)** | `Sources/IslandController.swift` (`installMonitors`, `isCarryingContent`) | A held mouse button posts `.leftMouseDragged`, not `.mouseMoved`, so drag-in needs its own event type or the island never expands. The gate is the drag pasteboard's **types**, not its `changeCount`: measured, the count does not move when a drag starts. The pasteboard is cleared on `.mouseMoved` because AppKit leaves the previous drag's types behind. See §5. |
 | Polls only run while expanded **(Phase 1)** | `Sources/IslandController.swift` (`$expanded` sink), `Sources/IslandModel.swift` (`startPolling` / `stopPolling`) | Both the Spotlight watch and `PlayerService.startPolling()` / `stopPolling()` are driven off `$expanded`. Verified: zero `osascript` spawns while closed. This is the precedent the `PanelProvider` lifecycle follows. |
 | Panel level `.mainMenu + 3`, SkyLight space attach | `Sources/FullscreenSupport.swift` | New panels inherit this; no extra work. |
@@ -220,18 +220,22 @@ on a panel nobody picked.
 
 ### Music while another panel is open
 
-**No strip. Music is only visible in the closed notch.** A 28 pt now-playing
-strip was built on every non-music panel and then removed: it was chrome that
-stayed on screen, it duplicated what the closed notch already shows, and it cost
-~34 pt at the top of every list.
+**Nothing of ours is drawn while closed — macOS already does it.** When media plays,
+the menu bar shows the system's own now-playing live activity: artwork plus a
+waveform, in a pill just right of the notch, coloured from the artwork, and it
+persists through a pause.
 
-The closed notch already carries it — `WingContent` plus the chin, which widens
-the island by `2 * (height - 12) + 20` while `isPlaying`, giving artwork on one
-side and a waveform or pause glyph on the other. Nothing is shown when nothing is
-playing, and a paused track collapses back to the bare cutout.
+An earlier version drew a "chin" beside the cutout — the island widened by
+`2 * (height - 12) + 20`, with 20 pt artwork and three bars. It was modelled on
+BoringNotch and worked, but macOS now draws the same thing, so both appeared side by
+side: two artworks 200 pt apart. The system's is better on every axis — it is already
+there, it colours itself from the artwork, it survives a pause, and it costs us
+nothing. Ours cost **3.8% of a core** whenever music played and the island was closed.
 
-Consequence, accepted: a paused track is invisible until the island opens. That
-is the trade for not having chrome on the lists.
+So closed, the island is the camera cutout and 2 pt either side: no pixels, invisible
+against the notch, 0.0% of a core. `WingContent`, `Equalizer` and the widening are
+deleted. This is also why there is no pause-grace, no strip, and no chin state to
+keep in step with the player — the OS owns that surface.
 
 ---
 
@@ -327,39 +331,36 @@ click row
   editor.
 - ⌥-click = copy only, no keystroke. Plain click = copy + paste.
 
-### Paste confirmation (planned — Phase 8)
+### Paste confirmation (planned — Phase 8, design reopened)
 
-Auto-paste works but is **invisible**: the island collapses, ⌘V fires, and the
-only evidence is that text appears in the app you were already looking at. Click a
-row and nothing acknowledges it, so it reads as "did that do anything?" —
-especially on ⌥-click, where copy-only is deliberate and looks identical.
+Auto-paste works but is **invisible**: the island collapses, ⌘V fires, and the only
+evidence is text appearing in an app you were already looking at. Click a row and
+nothing acknowledges it, so it reads as "did that do anything?" — and ⌥-click is
+indistinguishable from a failure to paste.
 
-The confirmation has to appear **after the collapse**, because the panel is gone
-by the time the keystroke lands. So it goes in the closed notch, reusing the chin
-that already exists for "music playing": the island widens for ~1 second and shows
-a checkmark plus "Pasted". That also means it cannot be a row highlight, a notice
-strip, or anything else inside the panel.
+**The previous design no longer works.** It planned to show the tick in the chin —
+the closed notch widening for a second. The chin has since been deleted, because
+macOS draws its own now-playing live activity in that space (§6), so there is
+nothing to reuse and a tick there would sit next to the system's pill.
 
-Design constraints:
+Two options, neither chosen yet:
 
-- **Two outcomes, two signals.** Auto-paste shows ✓ Pasted; ⌥-click shows
-  "Copied" instead, so the difference is visible rather than something you have to
-  remember.
-- **The toggle is a small icon in the clipboard header**, beside the window
-  picker, persisted in `UserDefaults`. Off means no chin and no widening at all —
-  not a dimmed one.
-- **It must not fight the music chin.** If a track is playing, the chin is already
-  showing artwork and a waveform; the confirmation takes precedence for its second
-  and then reverts, rather than the two trying to share the band.
-- **Failure must stay loud.** `AccessibilityPaster.postPaste()` returning false
-  must not double as a failure report: with the grant missing the keystroke is
-  dropped silently, so a tick would be a lie. The Accessibility notice is the only
-  signal for that case.
+| Option | Detail | Cost |
+| --- | --- | --- |
+| **Transient widening** | The closed island widens for ~1 s showing `✓ Pasted` or `Copied` — a cutout-sized chin, used only for this, never for media | Reintroduces a small amount of the geometry just deleted, but for a different purpose and for one second |
+| **Hold the panel** | Delay the collapse ~600 ms and show the tick over the row | No new geometry, but every paste feels slower and the ⌘V lands late |
 
-Open question, deliberately not decided here: whether a 1 s chin is better than
-delaying the collapse by ~600 ms and showing the confirmation in the panel. Delay
-is more legible but makes every paste feel slower, and the keystroke would land
-late. Chin is the current choice.
+Transient widening is the better trade: the keystroke keeps its timing, and 1 s of a
+tick does not compete with the live activity because it is not media.
+
+Constraints either way:
+
+- **Two outcomes, two signals.** ✓ Pasted, and "Copied" for ⌥-click.
+- **Toggleable** from the clipboard header and persisted, next to the window picker.
+  Off means no widening at all, not a dimmed one.
+- **Not a failure report.** With the grant missing the keystroke is dropped
+  silently, so a tick would be a lie; the Accessibility notice is the only signal
+  for that case.
 
 ### Timing
 
@@ -579,10 +580,10 @@ which is too narrow to design around.
 SwiftUI content, and the window must not be click-through mid-drag. Keep the
 closed idle window (`notch + 4` wide — physical cutout only, nothing clickable
 behind it) permanently interactive (`ignoresMouseEvents = false`) as an
-`NSDraggingDestination`. When music is playing while closed, the `249 pt` chin
-overlaps live menu-bar space and stays click-through
-(`ignoresMouseEvents = true`); supporting drag-in while music is playing would
-need a separate cutout-only drop window later.
+`NSDraggingDestination`. Closed, the window is only the cutout, so it is always
+interactive — there is no playing chin to click through any more (§6). Supporting
+drag-in was once expected to need a separate cutout-only drop window; with the chin
+deleted that problem disappeared.
 
 **Selecting the shelf is not enough — `expand()` overwrites it.** `IslandModel`
 sets `activePanel = defaultPanel` inside `expand()` before flipping `expanded`.
@@ -940,21 +941,16 @@ the panel shows stale commands and raises a notice strip) and
 
 ## 9. Risks
 
-1. **Independent redraw drivers — measured, and one was expensive.** With CPU
-   time deltas rather than `ps %cpu` (a lifetime average, which had been
-   concealing this):
+1. **Independent redraw drivers — one was expensive, and it is now gone.**
+   Measured with CPU-time deltas rather than `ps %cpu` (a lifetime average, which
+   hid this for days): the closed playing island cost **9.0%** of a core because the
+   chin's three bars animated with `repeatForever`, redrawing at display rate. An
+   8 fps timer took it to 3.8%. Then the chin itself was deleted in favour of the
+   system live activity, and the state now costs **0.0%**.
+   What remains: the marquee (only inside `MusicPanel`, only while expanded), the
+   progress bar (1 Hz), and the history ages (1/min). Expanded costs 0.9%, closed
+   and idle 0.1%.
 
-   | State | Cost |
-   | --- | --- |
-   | Closed, paused, no chin | **0.1%** of a core |
-   | Closed, playing, chin visible | **9.0%** → **3.8%** after the fix |
-   | Expanded (any panel) | **1.7%** |
-
-   The chin's three bars used a `repeatForever` implicit animation, so a 12 pt
-   glyph redrew the whole island at display rate — in the state the app sits in
-   most. They are now computed from a `TimelineView` at ~8 fps. The marquee is
-   already gated (it lives only in `MusicPanel`, which exists only while
-   expanded). A static glyph would take this to zero if 3.8% ever matters.
 2. **Drag-and-drop into a `.mainMenu + 3` panel.** Works, but the window must
    not be click-through mid-drag, and drag types must be registered on an
    `NSView` behind the SwiftUI content. See §5 for the full mechanics.
@@ -1028,25 +1024,14 @@ the panel shows stale commands and raises a notice strip) and
 Deliberate, not overlooked. Each is a cost that was judged smaller than its fix;
 any of them can be reversed.
 
-1. **A paused track is invisible while the notch is closed.** The chin is gated on
-   `isPlaying`, so pausing collapses the island back to the bare cutout and the
-   artwork disappears even though the track is still loaded. Correct for "nothing
-   is happening", annoying if you paused to talk to someone. *Fix:* gate on
-   `nowPlaying != nil` with a 2–3 minute grace, the way the deleted strip did —
-   which is exactly the behaviour the strip was removed for, so this needs a
-   decision rather than a patch.
-2. **The empty shelf is taller than a one-file shelf.** 128 pt vs 102 pt, because
+1. **The empty shelf is taller than a one-file shelf.** 128 pt vs 102 pt, because
    the empty state is two lines of text under an icon and one row is a single row.
    Dropping your first file therefore *shrinks* the card by 26 pt. It is the
    correct height in both cases; it just reads as a wobble.
-3. **The settle delays are hand-tuned.** `0.6 s` expand, `0.45 s` collapse, chosen
+2. **The settle delays are hand-tuned.** `0.6 s` expand, `0.45 s` collapse, chosen
    to land just past the spring's response (`0.36 s` / `0.24 s`) so the shrink
    cannot fire mid-flight. They are constants, not derived from the animation.
-4. **The equaliser animates while the island is closed and music is playing** —
-   the live activity. It cost 9% of a core until it was moved off the implicit
-   animation; it is 3.8% now. Dropping to a static glyph would make it zero, at the
-   cost of the "something is playing" cue. See risk 1.
-5. **The window was once sampled at `X = -59` for a frame during a display
+3. **The window was once sampled at `X = -59` for a frame during a display
    reconfiguration**, where it should be `536`. It self-corrected immediately and
    was never reproduced. The likely cause is `targetScreen()` returning a screen
    with a different frame mid-transition; nothing is guarding against it.
