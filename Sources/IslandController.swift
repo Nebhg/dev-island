@@ -17,17 +17,13 @@ final class IslandController {
     private var localMonitor: Any?
     private var collapseWork: DispatchWorkItem?
 
-    /// Last size the window was actually set to. Size changes are driven by the
-    /// SwiftUI animation through `syncWindow`; this lets `updateGeometry` tell a
-    /// pending size change (leave it alone) from a pure reposition (apply now).
-    private var renderedSize = CGSize.zero
-    private var isSyncingWindow = false
-
-    /// Latest size requested from a non-main thread, and whether a main-queue
-    /// drain is already scheduled. See `syncWindow(to:)`.
-    private let sizeLock = NSLock()
-    private var pendingSize: CGSize?
-    private var hopScheduled = false
+    /// Size the window is currently set to.
+    ///
+    /// Deliberately allowed to be larger than the island. During a transition it
+    /// holds the larger of the old and new sizes so the shape can animate inside it
+    /// without ever being clipped, then settles back once the animation finishes.
+    private var windowSize = CGSize.zero
+    private var settleWork: DispatchWorkItem?
 
     /// The area the island occupied before it shrank. Shrinking lifts the bottom
     /// edge above the pointer, which would otherwise read as "left the island" and
@@ -62,6 +58,21 @@ final class IslandController {
 
     init() {
         let model = IslandModel()
+
+        // Screenshot and debug overrides. Applied before the hosting view exists,
+        // because `IslandRootView` seeds its `@State` shape size from the model:
+        // creating the host first and replacing its root view later would keep the
+        // first (closed) size, since SwiftUI preserves state across a root-view
+        // swap of the same type.
+        if let panel = ProcessInfo.processInfo.environment["ISLAND_PANEL"],
+           let selected = PanelID(rawValue: panel) {
+            model.selectPanel(selected)
+        }
+        if ProcessInfo.processInfo.environment["ISLAND_EXPANDED"] == "1" {
+            model.expanded = true
+            model.locksOpen = true   // stays open so it can be screenshotted
+        }
+
         self.model = model
         self.panelHost = PanelHost(model: model)
         self.host = NSHostingView(rootView: IslandRootView(model: model))
@@ -180,22 +191,24 @@ final class IslandController {
             }
             .store(in: &cancellables)
 
-        // Handy for screenshots and for keeping it open while you poke at it.
-        if let panel = ProcessInfo.processInfo.environment["ISLAND_PANEL"],
-           let selected = PanelID(rawValue: panel) {
-            model.selectPanel(selected)
-        }
-        if ProcessInfo.processInfo.environment["ISLAND_EXPANDED"] == "1" {
-            model.expanded = true
-            model.locksOpen = true   // stays open so it can be screenshotted
-        }
-        // The window follows the shape frame by frame, so a resize animation never
-        // leaves a transparent gap showing the desktop underneath.
-        host.rootView = IslandRootView(model: model) { [weak self] size in
-            self?.syncWindow(to: size)
+        // The shelf's height follows how many files are in it, so adding or
+        // removing one has to resize the window the same way a panel switch does.
+        model.shelf.$items
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateGeometry() }
+            .store(in: &cancellables)
+
+        // The window must be grown before SwiftUI renders the first frame of the
+        // shape animation, so this runs synchronously from the model's setters
+        // rather than from a Combine sink. Assigned here, not earlier, because it
+        // touches the window and panel, which do not exist yet at the top of init.
+        model.onGeometryChange = { [weak self] in
+            guard let self else { return }
+            self.updateGeometry()
+            self.refreshMousePolicy()
         }
 
-        syncWindow(to: model.islandSize)
+        updateGeometry()
         refreshMousePolicy()
     }
 
@@ -210,6 +223,7 @@ final class IslandController {
             NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
         }
         spotlightTimer?.invalidate()
+        settleWork?.cancel()
     }
 
     func show() {
@@ -270,71 +284,69 @@ final class IslandController {
             model.notchSize = notch.size
         }
 
-        // The size is driven frame by frame by the SwiftUI animation through
-        // `syncWindow`. Only reposition here, for the two things the animation
-        // cannot know about: the initial layout and a screen change.
-        let frame = islandFrame(for: renderedSize, on: screen)
-        if abs(frame.minX - panel.frame.minX) > 0.5 || abs(frame.minY - panel.frame.minY) > 0.5 {
-            panel.setFrame(frame, display: true)
-        }
-    }
+        // Grow to the larger of the two sizes *before* the shape starts moving.
+        // A window that is never smaller than the shape cannot show the desktop
+        // through the island — that is risk 7, and this is why it is structural
+        // rather than a faster animation. A window that is larger than the shape
+        // only ever has transparent margin around an already-drawn shape.
+        let target = model.islandSize
+        let needed = CGSize(
+            width: max(windowSize.width, target.width),
+            height: max(windowSize.height, target.height)
+        )
+        applyWindowSize(needed, on: screen)
 
-    /// Moves the window to match the shape. Called for every interpolated size
-    /// while a resize animates, so the window is never larger than the island —
-    /// which is what left a transparent gap showing the desktop below it.
-    ///
-    /// The probe can be invoked from SwiftUI's async display-link thread, and
-    /// AppKit traps if a window frame is set off the main thread (EXC_BREAKPOINT
-    /// in `NSWindow _setFrameCommon:`). Frames arriving there are coalesced to the
-    /// latest size and applied on the main queue, so a burst of animation frames
-    /// costs one hop and a stale frame can never land after a newer one.
-    private func syncWindow(to size: CGSize) {
-        if Thread.isMainThread {
-            applyWindowSize(size)
+        guard needed != target else {
+            settleWork?.cancel()
+            settleWork = nil
             return
         }
-
-        sizeLock.lock()
-        pendingSize = size
-        let needsSchedule = !hopScheduled
-        hopScheduled = true
-        sizeLock.unlock()
-
-        guard needsSchedule else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.sizeLock.lock()
-            let latest = self.pendingSize
-            self.pendingSize = nil
-            self.hopScheduled = false
-            self.sizeLock.unlock()
-
-            guard let latest else { return }
-            self.applyWindowSize(latest)
-        }
+        scheduleSettle(to: target, on: screen)
     }
 
-    private func applyWindowSize(_ size: CGSize) {
-        guard !isSyncingWindow, let screen = targetScreen() else { return }
+    /// Shrinks the window back to the island once the shape has finished animating.
+    ///
+    /// This is the only reason the window is ever larger than the island, and it is
+    /// what keeps the island from inheriting BoringNotch's permanent dead zone: a
+    /// window sized to the largest panel would swallow clicks in the menu bar
+    /// beside every smaller one. The delay is a little past the spring's response so
+    /// it cannot fire mid-flight and clip the last few frames; the area it removes
+    /// is transparent either way.
+    private func scheduleSettle(to target: CGSize, on screen: NSScreen) {
+        settleWork?.cancel()
 
-        // Land on the real size rather than the spring's last rounding artefact.
-        let target = model.islandSize
-        let resolved = abs(size.width - target.width) < 0.5 && abs(size.height - target.height) < 0.5
-            ? target
-            : size
+        // While the window is larger than a collapsing island it covers live
+        // menu-bar space, so let clicks through until it has settled.
+        if model.expanded {
+            refreshMousePolicy()
+        } else {
+            panel.ignoresMouseEvents = true
+        }
 
-        // Nothing changed: bail out. Setting the frame re-lays out the hosting view,
-        // which re-runs the probe, which calls straight back here — an endless
-        // redraw loop at display rate even after the animation has finished.
-        guard abs(resolved.width - renderedSize.width) > 0.01
-            || abs(resolved.height - renderedSize.height) > 0.01
-        else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.settleWork = nil
+            self.applyWindowSize(target, on: screen)
+            self.refreshMousePolicy()
+        }
+        settleWork = work
+        let delay = model.expanded ? 0.6 : 0.45
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
 
-        isSyncingWindow = true
-        defer { isSyncingWindow = false }
-        renderedSize = resolved
-        panel.setFrame(islandFrame(for: resolved, on: screen), display: true)
-        host.frame = NSRect(origin: .zero, size: resolved)
+    private func applyWindowSize(_ size: CGSize, on screen: NSScreen) {
+        if size != windowSize {
+            windowSize = size
+            host.frame = NSRect(origin: .zero, size: size)
+        }
+
+        let frame = islandFrame(for: size, on: screen)
+        if abs(frame.minX - panel.frame.minX) > 0.5
+            || abs(frame.minY - panel.frame.minY) > 0.5
+            || abs(frame.width - panel.frame.width) > 0.5
+            || abs(frame.height - panel.frame.height) > 0.5 {
+            panel.setFrame(frame, display: true)
+        }
     }
 
     private func islandFrame(for size: CGSize, on screen: NSScreen) -> CGRect {

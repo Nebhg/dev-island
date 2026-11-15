@@ -3,13 +3,20 @@ import Combine
 import Foundation
 
 final class IslandModel: ObservableObject {
-    @Published var expanded = false
+    @Published var expanded = false {
+        // Synchronous, not via a Combine sink: the window has to be at least as big
+        // as the shape before SwiftUI renders the first frame of the animation, and
+        // a `receive(on: RunLoop.main)` sink is only guaranteed to run later.
+        didSet { onGeometryChange?() }
+    }
     @Published var nowPlaying: NowPlaying?
     @Published var notchSize = CGSize(width: 185, height: 32)
 
     /// Which panel the island is showing. Resets to `defaultPanel` each time it
     /// opens, so the island always lands where it was configured to.
-    @Published var activePanel = PanelID.music
+    @Published var activePanel = PanelID.music {
+        didSet { onGeometryChange?() }
+    }
 
     /// The panel opened on hover. Persisted.
     @Published var defaultPanel: PanelID {
@@ -19,6 +26,10 @@ final class IslandModel: ObservableObject {
     /// Set by a provider when its panel is degraded — e.g. terminal history
     /// needing `setopt INC_APPEND_HISTORY`. Rendered as a strip above content.
     @Published var panelNotice: String?
+
+    /// Called synchronously whenever something that changes `islandSize` changes.
+    /// Set by `IslandController` once its window exists.
+    var onGeometryChange: (() -> Void)?
 
     private static let defaultPanelKey = "defaultPanel"
 
@@ -47,9 +58,6 @@ final class IslandModel: ObservableObject {
     /// completed drop from a cancelled drag and put the previous panel back.
     var shelfDidReceiveDrop = false
 
-    /// Mirrors the player's strip state so SwiftUI re-renders when it changes.
-    @Published var showsPlayerStrip = false
-
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -67,11 +75,6 @@ final class IslandModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] track in self?.nowPlaying = track }
             .store(in: &cancellables)
-
-        player.$showsStrip
-            .receive(on: RunLoop.main)
-            .sink { [weak self] visible in self?.showsPlayerStrip = visible }
-            .store(in: &cancellables)
     }
 
     // MARK: - Geometry
@@ -81,7 +84,16 @@ final class IslandModel: ObservableObject {
     ///          which is real menu-bar screen but reads as one black band.
     /// Expanded: a black panel flush with the top edge, NotchNook style.
     var islandSize: CGSize {
-        if expanded { return activePanel.preferredSize }
+        if expanded {
+            // The shelf is the one panel whose height follows its contents.
+            if activePanel == .shelf {
+                return CGSize(
+                    width: activePanel.preferredSize.width,
+                    height: PanelID.shelfHeight(forItems: shelf.items.count, notchHeight: notchSize.height)
+                )
+            }
+            return activePanel.preferredSize
+        }
         // BoringNotch's "chin": the closed notch is 2pt wider than the cutout,
         // and grows by 2*(height-12)+20 while music plays.
         let base = notchSize.width + 4
@@ -159,23 +171,7 @@ final class IslandModel: ObservableObject {
 }
 
 final class PlayerService: ObservableObject {
-    @Published private(set) var nowPlaying: NowPlaying? {
-        didSet { updateStripVisibility() }
-    }
-
-    /// Whether the compact strip should be drawn on the non-music panels.
-    ///
-    /// The strip is chrome on every other panel, so it should not sit there forever
-    /// after playback stops. It stays for `stripGrace` seconds past the last moment
-    /// something was actually playing, then disappears.
-    @Published private(set) var showsStrip = false
-
-    /// How long the strip lingers after playback stops or pauses. One constant, so
-    /// tuning it is a one-line change.
-    static let stripGrace: TimeInterval = 120
-
-    private var lastPlaybackAt: Date?
-    private var hideWork: DispatchWorkItem?
+    @Published private(set) var nowPlaying: NowPlaying?
 
     private let remote = MediaRemote.shared
     private let spotify = SpotifyBridge.shared
@@ -224,49 +220,6 @@ final class PlayerService: ObservableObject {
     func stopPolling() {
         poll?.invalidate()
         poll = nil
-    }
-
-    // MARK: - Strip visibility
-
-    /// Re-evaluated on every `nowPlaying` change, which the 1.5 s poll drives while
-    /// the island is open.
-    private func updateStripVisibility() {
-        if nowPlaying?.isPlaying == true {
-            lastPlaybackAt = Date()
-            hideWork?.cancel()
-            hideWork = nil
-            setStripVisible(true)
-            return
-        }
-
-        guard let lastPlaybackAt else {
-            setStripVisible(false)
-            return
-        }
-
-        let remaining = Self.stripGrace - Date().timeIntervalSince(lastPlaybackAt)
-        guard remaining > 0 else {
-            setStripVisible(false)
-            return
-        }
-
-        setStripVisible(true)
-        // Only one pending hide: the poll would otherwise queue a new one every
-        // 1.5 s while playback is paused.
-        guard hideWork == nil else { return }
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.hideWork = nil
-            guard self.nowPlaying?.isPlaying != true else { return }
-            self.setStripVisible(false)
-        }
-        hideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + remaining, execute: work)
-    }
-
-    private func setStripVisible(_ visible: Bool) {
-        guard showsStrip != visible else { return }
-        showsStrip = visible
     }
 
     func refresh() {

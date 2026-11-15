@@ -5,23 +5,27 @@ import UniformTypeIdentifiers
 struct IslandRootView: View {
     @ObservedObject var model: IslandModel
 
-    /// Called with every interpolated size while a resize animates, so the window
-    /// can track the shape exactly. Without this the window is pre-sized to the
-    /// target, leaving a transparent gap below the still-growing island.
-    var onSizeChange: ((CGSize) -> Void)?
+    /// The shape's size. This is the only value that animates.
+    ///
+    /// The content is laid out at the *target* size and never interpolated, so a
+    /// panel switch reflows its text once instead of on every animation frame.
+    /// That reflow-per-frame was what made switching look like the new panel was
+    /// assembling itself as it faded in.
+    @State private var shapeSize: CGSize
 
-    /// Shape animation. Both are critically damped: the window follows the shape
-    /// frame by frame, so any spring overshoot shows up as the whole window
-    /// bouncing. Bounce is fine for a shape inside a fixed frame, not for a frame
-    /// that is itself resizing.
+    init(model: IslandModel) {
+        _model = ObservedObject(wrappedValue: model)
+        _shapeSize = State(initialValue: model.islandSize)
+    }
+
+    /// Shape animation. Both are critically damped: the window is pre-grown to the
+    /// larger of the two sizes and never resizes during the animation, so an
+    /// overshoot would push the shape past the window and clip it.
     static let expandAnimation = Animation.spring(response: 0.36, dampingFraction: 1)
     static let collapseAnimation = Animation.spring(response: 0.24, dampingFraction: 1)
 
-    private var sizeAnimation: Animation {
-        model.expanded ? Self.expandAnimation : Self.collapseAnimation
-    }
-
-    private var size: CGSize { model.islandSize }
+    /// Where the content is laid out, and where the shape is heading.
+    private var target: CGSize { model.islandSize }
 
     // BoringNotch's corner language: 6/14 when closed, 19/24 when open.
     private var topRadius: CGFloat { model.expanded ? 19 : 6 }
@@ -33,57 +37,55 @@ struct IslandRootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack(alignment: .top) {
-                shape.fill(.black)
-
-                if model.expanded {
-                    ExpandedPanel(model: model)
-                        .transition(.opacity)
-                } else {
-                    WingContent(model: model)
+            content
+                // Laid out once, at the size the island is heading for.
+                .frame(width: target.width, height: target.height, alignment: .top)
+                // Then placed inside the animating shape. Only this frame moves.
+                .frame(width: shapeSize.width, height: shapeSize.height, alignment: .top)
+                .background(alignment: .top) {
+                    ZStack(alignment: .top) {
+                        shape.fill(.black)
+                        // The glass belongs to the shell rather than the panel, so it
+                        // fills the shape as it animates instead of sitting inside a
+                        // larger black card mid-switch. The notch band above it stays
+                        // pure black, so the cutout remains invisible.
+                        GlassSurface()
+                            .padding(.top, model.notchSize.height)
+                    }
                 }
-            }
-            .frame(width: size.width, height: size.height, alignment: .top)
-            .modifier(SizeProbe(size: size, onSizeChange: onSizeChange))
-            .clipShape(shape)
-            // Straightens the top edge against the bezel, exactly like BoringNotch.
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(.black)
-                    .frame(height: 1)
-                    .padding(.horizontal, topRadius)
-                    .allowsHitTesting(false)
-            }
-            .contentShape(shape)
-            // No tap action: the closed island expands on hover before a click
-            // can land, so a click-to-Spotlight gesture could never fire. ⌘Space
-            // is the system precedent anyway.
-            .animation(sizeAnimation, value: size)
-            .animation(.easeInOut(duration: 0.18), value: model.expanded)
+                .clipShape(shape)
+                // Straightens the top edge against the bezel, exactly like BoringNotch.
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(.black)
+                        .frame(height: 1)
+                        .padding(.horizontal, topRadius)
+                        .allowsHitTesting(false)
+                }
+                .contentShape(shape)
+                .animation(.easeInOut(duration: 0.18), value: model.expanded)
 
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-}
-
-/// Reports every interpolated size while a resize animates, so the window can
-/// follow the shape frame by frame. Animatable rather than a `GeometryReader`
-/// because layout callbacks only ever see the final value, not the animation.
-struct SizeProbe: ViewModifier, Animatable {
-    var size: CGSize
-    var onSizeChange: ((CGSize) -> Void)?
-
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(size.width, size.height) }
-        set {
-            size = CGSize(width: newValue.first, height: newValue.second)
-            onSizeChange?(size)
+        .onChange(of: target) { _, new in
+            withAnimation(model.expanded ? Self.expandAnimation : Self.collapseAnimation) {
+                shapeSize = new
+            }
         }
     }
 
-    func body(content: Content) -> some View { content }
+    @ViewBuilder
+    private var content: some View {
+        if model.expanded {
+            ExpandedPanel(model: model)
+                .transition(.opacity)
+        } else {
+            WingContent(model: model)
+        }
+    }
 }
+
 
 /// Rounded on all four corners; the top pair is much tighter so the shape still
 /// reads as attached to the bezel.
@@ -170,11 +172,6 @@ struct ExpandedPanel: View {
             PanelBar(model: model)
 
             VStack(spacing: 0) {
-                if model.activePanel.showsPlayerStrip, model.showsPlayerStrip {
-                    PlayerStrip(model: model)
-                    Color.clear.frame(height: 6)
-                }
-
                 if let notice = model.panelNotice {
                     NoticeStrip(text: notice)
                     Color.clear.frame(height: 6)
@@ -183,15 +180,14 @@ struct ExpandedPanel: View {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            // A gap under the hairline that separates the notch band from the
+            // glass. Without it the first label sat hard against the separator.
+            .padding(.top, 10)
             .padding(.bottom, 8)
             // NotchShape tapers inward by topRadius on each side, so the body is
             // narrower than the panel. Content has to clear that or it gets clipped.
             .padding(.horizontal, 24)
-            .background(alignment: .top) { GlassSurface() }
         }
-        // Switching panel no longer resizes anything, so there is nothing to
-        // animate here; only the content cross-fade remains.
-        .animation(.easeInOut(duration: 0.16), value: model.activePanel)
     }
 
     @ViewBuilder
@@ -214,17 +210,23 @@ struct ExpandedPanel: View {
 struct PanelBar: View {
     @ObservedObject var model: IslandModel
 
+    /// Half the space beside the cutout. Read from the *active* panel, not the
+    /// window, so the icons are placed against the size the content is laid out
+    /// at even while the window is still the larger of the two during a switch.
     private var sideWidth: CGFloat {
-        max((PanelID.panelSize.width - model.notchSize.width) / 2, 0)
+        max((model.activePanel.preferredSize.width - model.notchSize.width) / 2, 0)
     }
 
     var body: some View {
         HStack(spacing: 0) {
+            // Anchored to the cutout rather than centred in the side band: the
+            // panels differ in width, and centring would slide all four icons
+            // sideways every time you switch to a wider or narrower one.
             group(PanelID.leftPanels)
-                .frame(width: sideWidth)
+                .frame(width: sideWidth, alignment: .trailing)
             Color.clear.frame(width: model.notchSize.width)
             group(PanelID.rightPanels)
-                .frame(width: sideWidth)
+                .frame(width: sideWidth, alignment: .leading)
         }
         .frame(height: model.notchSize.height)
     }
@@ -274,53 +276,6 @@ struct GlassSurface: View {
 
 /// Compact now-playing row shown above every non-music panel, so playback stays
 /// reachable without giving up the width a list needs. Only drawn when there is
-/// actually a track, so an idle island keeps the full panel height for content.
-struct PlayerStrip: View {
-    @ObservedObject var model: IslandModel
-
-    private var track: NowPlaying? { model.nowPlaying }
-
-    var body: some View {
-        GeometryReader { geometry in
-            HStack(spacing: 8) {
-                ArtworkView(image: track?.artwork, size: 20, radius: 5)
-
-                MarqueeText(
-                    text: track?.title ?? "",
-                    width: max(geometry.size.width - 74, 60),
-                    font: .system(size: 12, weight: .medium),
-                    nsFont: .systemFont(ofSize: 12, weight: .medium),
-                    speed: 20,
-                    gap: 24
-                )
-                .foregroundStyle(.white.opacity(0.9))
-                .id(track?.title ?? "none")
-
-                Spacer(minLength: 0)
-
-                Button { model.player.toggle() } label: {
-                    Image(systemName: track?.isPlaying == true ? "pause.fill" : "play.fill")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 8)
-            .frame(width: geometry.size.width, height: 26, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(.white.opacity(0.055))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .strokeBorder(.white.opacity(0.09), lineWidth: 0.5)
-                    )
-            )
-        }
-        .frame(height: 26)
-    }
-}
 
 /// Shown when a provider reports its panel is degraded rather than broken.
 struct NoticeStrip: View {
@@ -403,17 +358,19 @@ struct ShelfPanel: View {
     private var header: some View {
         HStack(spacing: 0) {
             Text("SHELF")
-                .font(.system(size: 8, weight: .semibold))
-                .tracking(0.7)
-                .foregroundStyle(.white.opacity(0.28))
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(.white.opacity(0.3))
             Spacer(minLength: 0)
             Text(shelf.items.isEmpty
                  ? "drop files here"
                  : "\(shelf.items.count) item\(shelf.items.count == 1 ? "" : "s")")
-                .font(.system(size: 8))
+                .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.22))
         }
-        .frame(height: 9)
+        .padding(.leading, 8)
+        .padding(.trailing, 6)
+        .frame(height: 14)
     }
 
     private var list: some View {
@@ -495,14 +452,14 @@ struct ShelfRow: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(item.name)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white.opacity(item.isMissing ? 0.4 : 0.9))
                     .lineLimit(1)
                     .truncationMode(.middle)
 
                 if let detail {
                     Text(detail)
-                        .font(.system(size: 9))
+                        .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(item.isMissing ? 0.45 : 0.3))
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -761,12 +718,13 @@ struct ClipboardPanel: View {
     private var header: some View {
         HStack(spacing: 0) {
             Text("FREQUENT")
-                .font(.system(size: 8, weight: .semibold))
-                .tracking(0.7)
-                .foregroundStyle(.white.opacity(0.28))
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(.white.opacity(0.3))
             Spacer(minLength: 0)
         }
-        .frame(height: 9)
+        .padding(.leading, 8)
+        .frame(height: 14)
     }
 
     /// Most-used entries, one click away. Equal widths and one line each: uneven
@@ -777,11 +735,11 @@ struct ClipboardPanel: View {
                 Button { paste(entry) } label: {
                     HStack(spacing: 5) {
                         Image(systemName: entry.kind.symbol)
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.45))
 
                         Text(entry.preview)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.white.opacity(0.82))
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -803,7 +761,7 @@ struct ClipboardPanel: View {
                 .help("Paste “\(entry.preview.prefix(80))”")
             }
         }
-        .frame(height: 22)
+        .frame(height: 24)
     }
 
     private var list: some View {
@@ -859,25 +817,33 @@ struct ClipRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: entry.kind.symbol)
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white.opacity(hovering ? 0.55 : 0.3))
-                .frame(width: 12)
+                .frame(width: 13)
 
             Text(entry.preview)
                 .font(isMonospaced
-                      ? .system(size: 11, design: .monospaced)
-                      : .system(size: 11))
+                      ? .system(size: 12, design: .monospaced)
+                      : .system(size: 12))
                 .foregroundStyle(.white.opacity(0.88))
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(Self.age(entry.lastUsed))
-                .font(.system(size: 9))
-                .foregroundStyle(.white.opacity(0.3))
-                .layoutPriority(1)
+            // Ages are recomputed on a timeline rather than only when the row is
+            // rebuilt, so "3m" cannot sit there for an hour on a panel left open.
+            // `.everyMinute` rather than `.periodic(from: .now, ...)`: `.now` is
+            // re-evaluated on every render, which restarts the schedule and loops.
+            TimelineView(.everyMinute) { context in
+                Text(Self.age(entry.copiedAt, now: context.date))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.3))
+                    .layoutPriority(1)
+                    .help("Copied \(entry.copiedAt.formatted(date: .abbreviated, time: .shortened))")
+            }
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 8)
+        .padding(.trailing, 14)
         .frame(height: 26)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -932,15 +898,17 @@ struct TerminalPanel: View {
     private var header: some View {
         HStack(spacing: 0) {
             Text("FREQUENT")
-                .font(.system(size: 8, weight: .semibold))
-                .tracking(0.7)
-                .foregroundStyle(.white.opacity(0.28))
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(.white.opacity(0.3))
             Spacer(minLength: 0)
             Text("\(terminal.entries.count) commands")
-                .font(.system(size: 8))
+                .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.22))
         }
-        .frame(height: 9)
+        .padding(.leading, 8)
+        .padding(.trailing, 6)
+        .frame(height: 14)
     }
 
     private var chipRow: some View {
@@ -949,11 +917,11 @@ struct TerminalPanel: View {
                 Button { paste(entry) } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "terminal")
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.45))
 
                         Text(entry.display)
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.82))
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -975,7 +943,7 @@ struct TerminalPanel: View {
                 .help("Paste “\(entry.display.prefix(80))”")
             }
         }
-        .frame(height: 22)
+        .frame(height: 24)
     }
 
     private var list: some View {
@@ -1022,23 +990,24 @@ struct TerminalRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "terminal")
-                .font(.system(size: 9, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white.opacity(hovering ? 0.55 : 0.3))
-                .frame(width: 12)
+                .frame(width: 13)
 
             Text(entry.display)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.88))
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("\(entry.uses)×")
-                .font(.system(size: 9))
+                .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.3))
                 .layoutPriority(1)
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 8)
+        .padding(.trailing, 14)
         .frame(height: 26)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -1105,7 +1074,7 @@ struct MusicPanel: View {
     /// Panel width minus the shell inset (24 each side), the panel inset (8 each
     /// side), the artwork and the gap beside it.
     private var textColumnWidth: CGFloat {
-        PanelID.panelSize.width - 48 - 16 - 132 - 16
+        PanelID.music.preferredSize.width - 48 - 16 - 132 - 16
     }
 
     private var subtitle: String {
@@ -1116,6 +1085,8 @@ struct MusicPanel: View {
     }
 
     private var transport: some View {
+        // Centred across the text column rather than pushed to its right edge:
+        // right-aligned left the block floating in the corner of a panel this tall.
         HStack(spacing: 16) {
             Spacer(minLength: 0)
             TransportButton(symbol: "backward.fill", size: 13) { model.player.previous() }
@@ -1125,6 +1096,7 @@ struct MusicPanel: View {
                 prominent: true
             ) { model.player.toggle() }
             TransportButton(symbol: "forward.fill", size: 13) { model.player.next() }
+            Spacer(minLength: 0)
         }
         .frame(height: 28)
     }

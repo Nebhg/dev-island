@@ -32,7 +32,20 @@ struct ClipEntry: Codable, Identifiable, Equatable {
     var kind: ClipKind
     var firstSeen: Date
     var lastUsed: Date
+
+    /// When this text was last **copied onto the clipboard**.
+    ///
+    /// Deliberately separate from `lastUsed`, which also moves when an entry is
+    /// pasted from the island. Showing that made a path copied yesterday read
+    /// "1m" simply because it had been clicked once, which looks like the clock is
+    /// broken. Optional so stores written before this field still decode.
+    var lastCopied: Date?
+
     var uses: Int
+
+    /// What the row's age chip shows. Falls back to `firstSeen` for entries
+    /// written before `lastCopied` existed.
+    var copiedAt: Date { lastCopied ?? firstSeen }
 
     /// Single-line preview with whitespace runs collapsed. Multi-line pastes
     /// otherwise render as ragged two-line rows that make the list look broken.
@@ -106,6 +119,7 @@ final class ClipboardStore {
             var entry = entries.remove(at: index)
             entry.uses += 1
             entry.lastUsed = now
+            entry.lastCopied = now
             entry.text = text
             entries.insert(entry, at: 0)
             scheduleSave()
@@ -118,6 +132,7 @@ final class ClipboardStore {
             kind: Self.kind(of: text),
             firstSeen: now,
             lastUsed: now,
+            lastCopied: now,
             uses: 1
         )
         entries.insert(entry, at: 0)
@@ -132,12 +147,16 @@ final class ClipboardStore {
     }
 
     /// Marks an entry as used again without changing its text.
+    ///
+    /// Updates `lastUsed` (which drives frecency and eviction) but **not**
+    /// `lastCopied`, and leaves the row where it is. Pasting something is not
+    /// copying it: rewriting the timestamp made a day-old entry claim it was a
+    /// minute old, and moving it to the top made the list shuffle under the
+    /// pointer just after a click.
     func touch(hash: String, now: Date = Date()) {
         guard let index = entries.firstIndex(where: { $0.hash == hash }) else { return }
-        var entry = entries.remove(at: index)
-        entry.uses += 1
-        entry.lastUsed = now
-        entries.insert(entry, at: 0)
+        entries[index].uses += 1
+        entries[index].lastUsed = now
         scheduleSave()
     }
 
@@ -185,7 +204,10 @@ final class ClipboardStore {
     private func load() {
         guard let data = try? Data(contentsOf: url) else { return }
         guard let decoded = try? JSONDecoder().decode([ClipEntry].self, from: data) else { return }
-        entries = Array(decoded.prefix(Self.cap))
+        // Sort by copy time rather than trusting the file order: entries written
+        // before `lastCopied` existed carry an order based on last *use*, which
+        // would leave the age column jumping around.
+        entries = Array(decoded.sorted { $0.copiedAt > $1.copiedAt }.prefix(Self.cap))
     }
 
     private func scheduleSave() {

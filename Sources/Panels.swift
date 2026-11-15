@@ -38,16 +38,45 @@ enum PanelID: String, CaseIterable, Identifiable {
     static let leftPanels: [PanelID] = [.clipboard, .terminal]
     static let rightPanels: [PanelID] = [.shelf, .music]
 
-    /// Every panel is the same size. Switching therefore cannot resize the window,
-    /// which removes the animation that used to show the desktop through the island
-    /// mid-switch (risk 7) instead of trying to make that animation faster.
-    static let panelSize = CGSize(width: 440, height: 310)
+    /// Sizes are per panel rather than one constant: the two list panels want
+    /// width for long rows, the other two want less of both. Clipboard and
+    /// terminal share a size, so switching between them moves nothing at all.
+    ///
+    /// A size change is handled by growing the window to `max(old, new)` before
+    /// the shape animates, so the window is never smaller than the shape — see
+    /// `IslandController.scheduleSettle(to:on:)`.
+    ///
+    /// The shelf is the exception: its height comes from `shelfHeight(for:)`
+    /// because it depends on how many files are in it. This value is the cap.
+    var preferredSize: CGSize {
+        switch self {
+        case .clipboard, .terminal: CGSize(width: 520, height: 320)
+        case .shelf: CGSize(width: 440, height: PanelID.maxShelfHeight)
+        case .music: CGSize(width: 440, height: 190)
+        }
+    }
 
-    var preferredSize: CGSize { Self.panelSize }
+    /// Tallest the shelf gets before its list scrolls instead.
+    static let maxShelfHeight: CGFloat = 260
 
-    /// Every panel except music carries the compact now-playing strip, so music
-    /// stays reachable without giving up the full width of a list.
-    var showsPlayerStrip: Bool { self != .music }
+    /// The shelf sizes to its contents. A fixed height reserved room for six rows
+    /// even with one file dropped, leaving a mostly empty card hanging under the
+    /// notch for no reason.
+    ///
+    /// The constants are the shell's, not guesses: `10 + 8` are the panel's top
+    /// and bottom padding, `14 + 6` the header row and the gap under it, and each
+    /// row is `30 pt` with a `1 pt` gap plus a `2 pt` tail on the list.
+    static func shelfHeight(forItems count: Int, notchHeight: CGFloat) -> CGFloat {
+        let chrome = notchHeight + 10 + 8 + 14 + 6
+        guard count > 0 else {
+            // The empty state is two lines of text under an icon, so it needs more
+            // than one row does. Kept as its own case rather than floored at the
+            // row height, which would clip it.
+            return chrome + 58
+        }
+        let rows = CGFloat(count) * 31 + 1
+        return min(chrome + rows, maxShelfHeight)
+    }
 }
 
 // MARK: - Provider lifecycle
