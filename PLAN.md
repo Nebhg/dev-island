@@ -349,8 +349,9 @@ Design constraints:
   showing artwork and a waveform; the confirmation takes precedence for its second
   and then reverts, rather than the two trying to share the band.
 - **Failure must stay loud.** `AccessibilityPaster.postPaste()` returning false
-  already sets `panelNotice` "Grant Accessibility to paste directly." That path
-  must keep reporting a problem, not a tick.
+  no longer reports anything — see the permission note below. A failed paste is
+  indistinguishable from a successful one, so the confirmation must not imply
+  either.
 
 Open question, deliberately not decided here: whether a 1 s chin is better than
 delaying the collapse by ~600 ms and showing the confirmation in the panel. Delay
@@ -381,17 +382,17 @@ untested fallback would have been dead code pretending to be insurance.
 
 ### Permission handling
 
-- **The preflight is advisory, not a gate.** `CGPreflightPostEventAccess()` was
-  treated as the single source of truth, and it lied: after the app moved to
-  `~/Applications` the panel showed "Grant Accessibility to paste directly" while
-  pasting worked normally. The check and reality disagree, so `postPaste()` now
-  always attempts the event and the preflights only decide whether to *warn*.
-  `CGPreflightPostEventAccess() || AXIsProcessTrusted()` — either counts, because
-  that combination matches observed behaviour.
-- Never block a click on a prompt. The click path tries every time.
-- A failed post sets `panelNotice` to `"Grant Accessibility to paste directly."`.
-  Shown on **both** history panels: the terminal pastes too, so a permission
-  problem was never a clipboard-only fact.
+- **Permission is not modelled at all.** Both preflights were measured reporting
+  `false` for the app launched from Spotlight — `post=false ax=false` — while
+  posting worked. So the check cannot be used to gate (it silently killed
+  auto-paste for anyone who launched the app normally, because `deliverPaste`
+  guarded on it) and it cannot be used to warn (it showed "Grant Accessibility"
+  over an app that pasted fine). `postPaste()` always attempts the event, and no
+  code path consults a permission API.
+- If a grant is ever genuinely missing the keystroke does nothing. That is the
+  cost of not being able to ask the question reliably, and it is smaller than
+  refusing to paste at random.
+- Nothing prompts. `AXIsProcessTrustedWithOptions` is not used.
 - **Auto-paste has a toggle** (the bolt in both history headers, persisted in
   `UserDefaults`, on by default). Off means copy-only, the same result as ⌥-click,
   which keeps working either way. No warning is shown when it is off — copy-only is
@@ -998,11 +999,11 @@ any of them can be reversed.
 - **Spotlight trigger:** Removed (`⌘Space` is the precedent); Spotlight avoidance / suppression while `SpotlightState.isOpen` is retained.
 - **Music layout:** `440 × 190`, `132 pt` artwork, scrub bar in the right column beside it (§6).
 - **Closed-state Spotify poll:** Gate the `1.5 s` AppleScript timer to `expanded` only; rely on notifications while closed.
-- **Click behaviour:** Auto-paste is in v1 (`⌘V` after collapse; `⌥`-click = copy only). Degrades silently to copy-only with `panelNotice` (`"Grant Accessibility to paste directly."`) when event-posting permission is absent.
+- **Click behaviour:** Auto-paste is the default (`⌘V` after collapse); `⌥`-click is copy-only. A **Paste / Copy** pill in both history headers toggles the default and is persisted, so the setting is visible rather than implied. No permission check anywhere — see §3.
 - **Terminal panel click:** Auto-paste with trailing newline stripped so a stray Return cannot execute a pasted command.
 - **Signing identity:** Self-signed Code Signing certificate (`Dev Island Local Signing`), not ad-hoc, so TCC Accessibility and Automation grants survive rebuilds.
 - **Clipboard capture while closed:** Accepted (`0.4 s` `changeCount` integer compare).
-- **Auto-paste is a preference, not a constant.** The bolt in both history headers toggles it; ⌥-click remains per-click copy-only. One setting, shown on both panels, because a switch only reachable from the clipboard panel is invisible while you are looking at the terminal.
+- **Auto-paste is a preference, not a constant.** A pill reading **Paste** or **Copy** in both history headers states what a click will do, rather than using a symbol that has to be decoded. Persisted; ⌥-click remains per-click copy-only. One setting shown on both panels, because a switch only reachable from the clipboard is invisible while you are looking at the terminal.
 - **Paste confirmation lives in the closed notch, not in the panel.** The panel is gone by the time ⌘V lands, so the acknowledgement has to survive the collapse: the chin widens for ~1 s with ✓ Pasted, or "Copied" for ⌥-click. Toggleable from the clipboard header and off means off — no chin at all. Phase 7.
 - **Testing never touches real data.** `ISLAND_DATA_DIR` redirects every store plus the instance lock, and `ISLAND_HISTORY` points the terminal panel at a fixture. The time windows were verified that way; the shell history and `clipboard.json` were confirmed untouched afterwards.
 - **History windows are a filter, never retention.** `24h / 7d / 30d / All` per panel, applied to both the list and the chips. Nothing is deleted; a shorter clipboard cap is the separate, safe lever if storage ever needs to shrink.

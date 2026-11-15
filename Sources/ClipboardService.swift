@@ -22,7 +22,6 @@ final class ClipboardService: ObservableObject {
         }
     }
 
-    @Published private(set) var canAutoPaste = AccessibilityPaster.canPost
 
     /// Entries inside `window`, newest first. The list renders this rather than
     /// `entries`, so filtering and ranking happen once per change instead of once
@@ -141,10 +140,6 @@ final class ClipboardService: ObservableObject {
         // Syncing the count is enough — see the note in `capture`.
         lastChangeCount = pasteboard.changeCount
         return true
-    }
-
-    func refreshPermission() {
-        canAutoPaste = AccessibilityPaster.canPost
     }
 
     func remove(_ entry: ClipEntry) {

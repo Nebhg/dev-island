@@ -32,23 +32,10 @@ final class IslandModel: ObservableObject {
     ///
     /// Persisted: this is a preference about how the app behaves, not view state.
     @Published var autoPasteEnabled: Bool {
-        didSet {
-            UserDefaults.standard.set(autoPasteEnabled, forKey: Self.autoPasteKey)
-            panelNotice = pastePermissionNotice
-        }
+        didSet { UserDefaults.standard.set(autoPasteEnabled, forKey: Self.autoPasteKey) }
     }
 
     private static let autoPasteKey = "autoPasteEnabled"
-
-    /// The warning a history panel should show when a click will only copy.
-    ///
-    /// Shared by the clipboard and terminal panels: both paste, so a permission
-    /// problem is not a clipboard-only fact. Silent when auto-paste is off, because
-    /// then copy-only is what was asked for.
-    var pastePermissionNotice: String? {
-        guard autoPasteEnabled, !clipboard.canAutoPaste else { return nil }
-        return "Grant Accessibility to paste directly."
-    }
 
     /// Called synchronously whenever something that changes `islandSize` changes.
     /// Set by `IslandController` once its window exists.
@@ -199,14 +186,13 @@ final class IslandModel: ObservableObject {
 
     private func deliverPaste(autoPaste: Bool) {
         collapse()
-        guard autoPaste, clipboard.canAutoPaste else { return }
+        // Never gated on a permission check: see `AccessibilityPaster`.
+        guard autoPaste else { return }
         // Next runloop turn: the pasteboard write and the window teardown both have
         // to land before the keystroke, or the target app pastes the old contents.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             guard let self else { return }
-            if !AccessibilityPaster.postPaste() {
-                self.panelNotice = "Grant Accessibility to paste directly."
-            }
+            AccessibilityPaster.postPaste()
         }
     }
 }

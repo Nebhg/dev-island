@@ -274,24 +274,35 @@ struct GlassSurface: View {
     }
 }
 
-/// Auto-paste on/off, in a history panel's header.
+/// What a click on a row does, and the switch for it.
 ///
-/// One setting, shown on both history panels: a switch you can only reach from the
-/// clipboard panel is invisible while you are looking at the terminal.
+/// A bare bolt said nothing: it could be "fast", "async" or "power". This states
+/// the outcome instead — the word is the label and the state, so there is nothing
+/// to decode. One setting, shown on both history panels, because a switch only
+/// reachable from the clipboard is invisible while you are looking at the terminal.
 struct PasteToggle: View {
     let enabled: Bool
     let toggle: () -> Void
 
     var body: some View {
         Button(action: toggle) {
-            Image(systemName: enabled ? "bolt.fill" : "bolt.slash")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.white.opacity(enabled ? 0.9 : 0.3))
-                .frame(width: 16, height: 14)
-                .contentShape(Rectangle())
+            HStack(spacing: 4) {
+                Image(systemName: enabled ? "arrow.down.doc" : "doc.on.doc")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(enabled ? "Paste" : "Copy")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundStyle(.white.opacity(enabled ? 0.9 : 0.5))
+            .padding(.horizontal, 6)
+            .frame(height: 14)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(.white.opacity(enabled ? 0.12 : 0.05))
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(enabled ? "Auto-paste on — click to copy only" : "Copy only — click to auto-paste")
+        .help(enabled ? "A click pastes into the front app — click for copy-only" : "A click only copies — click to paste instead")
     }
 }
 

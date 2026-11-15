@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller = IslandController()
         controller?.show()
         buildStatusItem()
+
     }
 
     func applicationWillTerminate(_ notification: Notification) {

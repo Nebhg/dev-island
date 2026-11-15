@@ -145,9 +145,7 @@ final class ClipboardProvider: PanelProvider {
     }
 
     func start() {
-        model.clipboard.refreshPermission()
-        // Say why a click only copied, rather than leaving the user to guess.
-        model.panelNotice = model.pastePermissionNotice
+        model.panelNotice = nil
     }
 
     func stop() {}
@@ -167,18 +165,11 @@ final class TerminalProvider: PanelProvider {
 
     func start() {
         model.terminal.startWatching()
-        model.clipboard.refreshPermission()
-        // The terminal pastes too, so the permission warning belongs here as well.
-        // Its own notice wins when present: stale history is the more specific
-        // problem for this panel.
-        model.panelNotice = model.terminal.notice ?? model.pastePermissionNotice
+        model.panelNotice = model.terminal.notice
         // The notice can appear after the first parse (file watcher, re-parse).
         noticeSubscription = model.terminal.$notice
             .receive(on: RunLoop.main)
-            .sink { [weak self] notice in
-                guard let self else { return }
-                self.model.panelNotice = notice ?? self.model.pastePermissionNotice
-            }
+            .sink { [weak self] notice in self?.model.panelNotice = notice }
     }
 
     func stop() {
