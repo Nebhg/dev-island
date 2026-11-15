@@ -28,10 +28,10 @@ final class MediaStream {
     private var process: Process?
     private var pipe: Pipe?
     private var pending = Data()
-    private var artworkCache: [String: NSImage] = [:]
     private var isStopping = false
 
-    private lazy var decoder = ISO8601DateFormatter()
+    /// Parsing lives in its own type so it can be tested without a subprocess.
+    private var decoder = MediaStreamDecoder()
 
     func start() {
         guard process == nil else { return }
@@ -108,19 +108,14 @@ final class MediaStream {
     // MARK: - Parsing
 
     /// Runs on the pipe's background queue: split on newlines and decode. Artwork
-    /// is decoded here too, off the main thread, because it is a ~75 KB JPEG.
-    private enum Update {
-        case nothingPlaying
-        case track(NowPlaying)
-    }
-
+    /// is decoded there too, off the main thread, because it is a ~75 KB JPEG.
     private func consume(_ data: Data) {
         pending.append(data)
         while let newline = pending.firstIndex(of: 0x0A) {
             let line = pending[pending.startIndex..<newline]
             pending = pending[pending.index(after: newline)...]
             guard !line.isEmpty else { continue }
-            switch decode(line) {
+            switch decoder.decode(line) {
             case .nothingPlaying:
                 DispatchQueue.main.async { [weak self] in self?.onUpdate?(nil) }
             case let .track(track):
@@ -129,54 +124,5 @@ final class MediaStream {
                 continue
             }
         }
-    }
-
-    private func decode(_ line: Data) -> Update? {
-        guard let raw = try? JSONSerialization.jsonObject(with: line),
-              let object = raw as? [String: Any],
-              let payload = object["payload"] as? [String: Any]
-        else { return nil }
-
-        // An empty payload means nothing is playing. The adapter emits one of
-        // these on startup too, so this must not be treated as an error.
-        guard !payload.isEmpty else { return .nothingPlaying }
-
-        guard let title = payload["title"] as? String, !title.isEmpty else { return nil }
-
-        func number(_ key: String) -> Double {
-            (payload[key] as? NSNumber)?.doubleValue ?? 0
-        }
-
-        let artist = payload["artist"] as? String ?? ""
-        let identifier = payload["contentItemIdentifier"] as? String ?? "\(title)|\(artist)"
-
-        // Artwork arrives with the first payload for a track and is absent from
-        // the diff updates that follow, so it is cached by item identifier rather
-        // than re-decoded — a 75 KB JPEG per update would be absurd.
-        var artwork = artworkCache[identifier]
-        if artwork == nil,
-           let base64 = payload["artworkData"] as? String,
-           let bytes = Data(base64Encoded: base64) {
-            artwork = NSImage(data: bytes)
-            artworkCache[identifier] = artwork
-            if artworkCache.count > 8 { artworkCache.removeAll() }
-        }
-
-        // `playing` wins: the adapter reports `playbackRate: 1` on a *paused*
-        // track, so trusting the rate alone would show a paused video as playing.
-        let rate = (payload["playing"] as? Bool).map { $0 ? 1.0 : 0.0 }
-            ?? number("playbackRate")
-        let stamp = (payload["timestamp"] as? String).flatMap { decoder.date(from: $0) } ?? Date()
-
-        return .track(NowPlaying(
-            title: title,
-            artist: artist,
-            album: payload["album"] as? String ?? "",
-            duration: number("duration"),
-            elapsed: number("elapsedTime"),
-            rate: rate,
-            timestamp: stamp,
-            artwork: artwork
-        ))
     }
 }
