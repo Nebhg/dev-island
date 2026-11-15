@@ -1,10 +1,11 @@
 # Dev Island — multi-panel plan
 
-Status: **Phases 1–6 implemented and verified by use, browser media included;
-7–10 pending.** 0a is answered (it works), 0b — whether *reading* the pasteboard
-raises a macOS banner — is still unchecked and is the only unknown left in the
-happy path. §1 states facts verified against the source; §13 tracks the code
-review; §11 records signing and installation.
+Status: **complete.** Phases 0a and 1–10 are implemented and verified by use;
+0b is the only unrun check (whether *reading* the pasteboard makes macOS prompt —
+no prompt has ever appeared, so it is close to answered by observation). §1 states
+facts verified against the source; §13 records the code review; §11 records signing
+and installation. The three accepted rough edges in §9 are deliberate, not
+outstanding.
 
 | Phase | State |
 | --- | --- |
