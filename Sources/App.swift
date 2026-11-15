@@ -95,6 +95,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.activePanel = selected
         }
         model.expanded = state != "wings"
+
+        // A preview has no PanelHost, so nothing starts the active provider and
+        // the terminal panel renders as "No history yet". Prime it, or the
+        // preview cannot show what the panel actually looks like.
+        if model.activePanel == .terminal {
+            model.terminal.startWatching()
+        }
         if state == "wings" || state == "playing" {
             model.nowPlaying = NowPlaying(
                 title: "Preview Track (a long title that has to scroll)",

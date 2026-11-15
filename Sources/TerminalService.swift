@@ -14,22 +14,44 @@ final class TerminalService: ObservableObject {
     /// panel re-renders on every model change — including the 1.5 s player poll —
     /// so ~330 entries were being re-sorted several times a second.
     @Published private(set) var entries: [TerminalEntry] = [] {
-        didSet { frequent = TerminalHistory.ranked(entries, limit: Self.frequentLimit) }
+        didSet { rebuild() }
     }
     @Published private(set) var notice: String?
 
-    /// Top entries for the chip strip, kept in step with `entries` for the same
-    /// reason as the sort above.
+    /// How far back the panel shows. A filter only — see `HistoryWindow`.
+    @Published var window: HistoryWindow = .all {
+        didSet {
+            UserDefaults.standard.set(window.rawValue, forKey: Self.windowKey)
+            rebuild()
+        }
+    }
+
+    /// Entries inside `window`, newest first. The list renders this rather than
+    /// `entries`.
+    private(set) var visible: [TerminalEntry] = []
+
+    /// Top entries for the chip strip, ranked within `window` for the same reason
+    /// as the sort above.
     private(set) var frequent: [TerminalEntry] = []
 
     private static let frequentLimit = 3
+    private static let windowKey = "terminalWindow"
+
+    private func rebuild() {
+        let now = Date()
+        visible = entries.filter { window.includes($0.lastRun, now: now) }
+        frequent = TerminalHistory.ranked(visible, limit: Self.frequentLimit)
+    }
 
     private let rules: IgnoreRules
     private var source: DispatchSourceFileSystemObject?
     private var watchedFD: Int32 = -1
 
+    /// `ISLAND_HISTORY` points the panel at a fixture instead of the real file,
+    /// so the window filters can be exercised without touching shell history.
     private static var historyPath: String {
-        NSString(string: "~/.zsh_history").expandingTildeInPath
+        ProcessInfo.processInfo.environment["ISLAND_HISTORY"]
+            ?? NSString(string: "~/.zsh_history").expandingTildeInPath
     }
 
     private static var zshrcPath: String {
@@ -38,6 +60,10 @@ final class TerminalService: ObservableObject {
 
     init(rules: IgnoreRules) {
         self.rules = rules
+        if let stored = UserDefaults.standard.string(forKey: Self.windowKey),
+           let restored = HistoryWindow(rawValue: stored) {
+            window = restored
+        }
     }
 
     deinit {

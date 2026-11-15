@@ -274,6 +274,38 @@ struct GlassSurface: View {
     }
 }
 
+/// The 24h / 7d / 30d / All control in a history panel's header.
+///
+/// Four small buttons rather than a `Picker`, because a segmented control inside
+/// a 14 pt header row is taller than the row and drags the layout around. The
+/// selected one gets a faint fill; the rest stay at 0.3 so the row still reads as
+/// a label first and a control second.
+struct HistoryWindowPicker: View {
+    let window: HistoryWindow
+    let select: (HistoryWindow) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(HistoryWindow.allCases) { option in
+                Button { select(option) } label: {
+                    Text(option.label)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(window == option ? 0.9 : 0.3))
+                        .padding(.horizontal, 6)
+                        .frame(height: 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(.white.opacity(window == option ? 0.12 : 0))
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(option.title)
+            }
+        }
+    }
+}
+
 /// Shown when a provider reports its panel is degraded rather than broken.
 struct NoticeStrip: View {
     let text: String
@@ -679,10 +711,12 @@ struct ClipboardPanel: View {
         VStack(spacing: 6) {
             if !entries.isEmpty {
                 header
+            }
+            if !clipboard.frequent.isEmpty {
                 chipRow
             }
 
-            if entries.isEmpty {
+            if clipboard.visible.isEmpty {
                 emptyState
             } else {
                 list
@@ -700,6 +734,7 @@ struct ClipboardPanel: View {
                 .tracking(0.6)
                 .foregroundStyle(.white.opacity(0.3))
             Spacer(minLength: 0)
+            HistoryWindowPicker(window: clipboard.window) { clipboard.window = $0 }
         }
         .padding(.leading, 8)
         .frame(height: 14)
@@ -745,7 +780,7 @@ struct ClipboardPanel: View {
     private var list: some View {
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(spacing: 1) {
-                ForEach(entries) { entry in
+                ForEach(clipboard.visible) { entry in
                     ClipRow(entry: entry) { paste(entry) }
                         .contextMenu {
                             Button("Copy") { clipboard.write(entry) }
@@ -759,15 +794,19 @@ struct ClipboardPanel: View {
         }
     }
 
+    /// Two different nothings: an empty history, or a window that excludes
+    /// everything in it. Saying "nothing copied yet" while 300 entries sit behind
+    /// a filter would read as broken.
     private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "doc.on.clipboard")
+        let filtered = !entries.isEmpty
+        return VStack(spacing: 6) {
+            Image(systemName: filtered ? "line.3.horizontal.decrease" : "doc.on.clipboard")
                 .font(.system(size: 18))
                 .foregroundStyle(.white.opacity(0.25))
-            Text("Nothing copied yet")
+            Text(filtered ? "Nothing in the last \(clipboard.window.span)" : "Nothing copied yet")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.55))
-            Text("Copy something and it shows up here")
+            Text(filtered ? "Pick All to see older items" : "Copy something and it shows up here")
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.3))
         }
@@ -855,10 +894,12 @@ struct TerminalPanel: View {
         VStack(spacing: 6) {
             if !terminal.entries.isEmpty {
                 header
+            }
+            if !terminal.frequent.isEmpty {
                 chipRow
             }
 
-            if terminal.entries.isEmpty {
+            if terminal.visible.isEmpty {
                 emptyState
             } else {
                 list
@@ -874,9 +915,13 @@ struct TerminalPanel: View {
                 .tracking(0.6)
                 .foregroundStyle(.white.opacity(0.3))
             Spacer(minLength: 0)
-            Text("\(terminal.entries.count) commands")
+            // The filtered count, so the number agrees with the rows below it and
+            // clicking a window gives immediate feedback.
+            Text("\(terminal.visible.count) command\(terminal.visible.count == 1 ? "" : "s")")
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.22))
+                .padding(.trailing, 10)
+            HistoryWindowPicker(window: terminal.window) { terminal.window = $0 }
         }
         .padding(.leading, 8)
         .padding(.trailing, 6)
@@ -921,7 +966,7 @@ struct TerminalPanel: View {
     private var list: some View {
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(spacing: 1) {
-                ForEach(terminal.entries) { entry in
+                ForEach(terminal.visible) { entry in
                     TerminalRow(entry: entry) { paste(entry) }
                         .contextMenu {
                             Button("Copy") { model.clipboard.writeText(entry.command) }
@@ -933,14 +978,15 @@ struct TerminalPanel: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "terminal")
+        let filtered = !terminal.entries.isEmpty
+        return VStack(spacing: 6) {
+            Image(systemName: filtered ? "line.3.horizontal.decrease" : "terminal")
                 .font(.system(size: 18))
                 .foregroundStyle(.white.opacity(0.25))
-            Text("No history yet")
+            Text(filtered ? "Nothing in the last \(terminal.window.span)" : "No history yet")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.55))
-            Text("Run something in a new terminal")
+            Text(filtered ? "Pick All to see older commands" : "Run something in a new terminal")
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.3))
         }

@@ -182,6 +182,24 @@ icons stay put even while the window is still the larger of the two sizes.
 Deliberately **no scroll-to-switch**: a clipboard list needs wheel scrolling,
 and a global scroll handler fights it.
 
+### Time window
+
+The panel header carries `24h · 7d · 30d · All`, persisted per panel in
+`UserDefaults`. It is a **view filter, not retention**: choosing 24h hides older
+rows and deletes nothing. Deleting on toggle would be a trap — pick 24h once and
+the month is gone, with no undo — and the terminal's history belongs to zsh, so
+there is nothing of ours to delete anyway.
+
+Both the list and the `FREQUENT` chips filter, or the chips would advertise
+30-day commands above a 24-hour list. The command count shows the filtered total,
+so clicking a window gives immediate feedback. When a window matches nothing, the
+chip row collapses and the empty state says "Nothing in the last 24 hours / Pick
+All to see older commands" rather than "No history yet" — with 300 entries sitting
+behind a filter, the latter reads as broken.
+
+`ISLAND_HISTORY` points the provider at a fixture file, which is how the windows
+are tested without touching real shell history.
+
 ### Default panel
 
 **Clipboard.** It is the panel that is useful the instant the island opens — you
@@ -342,6 +360,7 @@ untested fallback would have been dead code pretending to be insurance.
 ### Ingest
 
 - **Prerequisite:** `setopt INC_APPEND_HISTORY` in `~/.zshrc` (without `INC_APPEND_HISTORY` or `SHARE_HISTORY`, macOS zsh only flushes on shell exit). The terminal provider checks `~/.zshrc` on load and renders a dismissible hint strip when missing instead of silently showing stale history.
+- **Second prerequisite** (for the time windows, §2): `setopt EXTENDED_HISTORY`, so zsh prefixes each entry with `: <epoch>:<elapsed>;`. Without it the file carries bare command lines and there is no time to filter on — only order. The parser accepts both shapes; entries written before the option was enabled have no timestamp and appear **only** under the "All" window, because inventing a time for them would be a guess and hiding them from "All" would lose them.
 - *Future note:* adding a `precmd` hook in `~/.zshrc` that writes to a dedicated `~/.dev-island-history` file would be a cleaner long-term alternative that works regardless of zsh history options.
 - Watch `~/.zsh_history` with a `DispatchSource` file watcher handling `.delete`/`.rename` by closing the old descriptor and re-arming on the path (zsh atomically replaces on some operations). No polling. Ignore `~/.zsh_sessions/*` — the main file covers it.
 
@@ -837,6 +856,7 @@ show stale commands; it renders a notice strip when the option is missing.
 - **Terminal panel click:** Auto-paste with trailing newline stripped so a stray Return cannot execute a pasted command.
 - **Signing identity:** Self-signed Code Signing certificate (`Dev Island Local Signing`), not ad-hoc, so TCC Accessibility and Automation grants survive rebuilds.
 - **Clipboard capture while closed:** Accepted (`0.4 s` `changeCount` integer compare).
+- **History windows are a filter, never retention.** `24h / 7d / 30d / All` per panel, applied to both the list and the chips. Nothing is deleted; a shorter clipboard cap is the separate, safe lever if storage ever needs to shrink.
 - **Panel ranking:** Highlight by frecency (`uses × 0.5 ^ (days / 14)`), never filter by frequency. The only deny-list is the terminal panel's manual trivia list (§4); the clipboard panel has none, because any copied text is potentially worth pasting back.
 - **Ignore rules are manual:** no auto-learning from paste history.
 - **Terminal ranking:** by use count, then recency (file position). No time decay, because the history file carries no timestamps — a decay curve would be invented rather than measured. The list is recency-ordered; the chip strip is usage-ordered.
@@ -961,6 +981,7 @@ re-check them the same way.
 | `ISLAND_EXPANDED=1` | Opens the island and sets `model.locksOpen = true`, so it stays open and can be captured |
 | `ISLAND_PANEL=music\|clipboard\|terminal\|shelf` | Selects the panel before first paint |
 | `ISLAND_RENDER=<path>` + `ISLAND_RENDER_STATE=expanded\|playing\|wings` + `ISLAND_RENDER_PANEL=…` | Renders a static preview to PNG via `ImageRenderer` |
+| `ISLAND_HISTORY=<path>` | Point the terminal panel at a fixture instead of `~/.zsh_history`, so window filters and parsing can be exercised without touching real shell history |
 | `ISLAND_DRAG_PROBE=1` | Logs every `.leftMouseDragged` with both gate inputs (`content`, `count`, `base`, `inside`, `types`) to stderr. The only reliable way to inspect drag events — a standalone binary launched from a terminal does not inherit the app's TCC grant and sees nothing |
 
 `locksOpen` is the reason a screenshot session does not collapse under the

@@ -11,20 +11,36 @@ import Foundation
 /// its panel.
 final class ClipboardService: ObservableObject {
     @Published private(set) var entries: [ClipEntry] = [] {
-        didSet { frequent = Frecency.ranked(entries, limit: Self.frequentLimit) }
+        didSet { rebuild() }
     }
+
+    /// How far back the panel shows. A filter only — see `HistoryWindow`.
+    @Published var window: HistoryWindow = .all {
+        didSet {
+            UserDefaults.standard.set(window.rawValue, forKey: Self.windowKey)
+            rebuild()
+        }
+    }
+
     @Published private(set) var canAutoPaste = AccessibilityPaster.canPost
 
-    /// Top entries for the chip strip, kept in step with `entries` instead of
-    /// re-ranked inside `body`. The panel rebuilt this list on every render — and
-    /// it renders on every player poll, so up to 300 entries were sorted twice a
-    /// second to produce three chips.
-    ///
-    /// The ranking has a 14-day half-life, so holding it for the length of a
-    /// session is not meaningful staleness.
+    /// Entries inside `window`, newest first. The list renders this rather than
+    /// `entries`, so filtering and ranking happen once per change instead of once
+    /// per render — and the panel re-renders on every player poll.
+    private(set) var visible: [ClipEntry] = []
+
+    /// Top entries for the chip strip, ranked within `window` so the chips can
+    /// never disagree with the list underneath them.
     private(set) var frequent: [ClipEntry] = []
 
     private static let frequentLimit = 3
+    private static let windowKey = "clipboardWindow"
+
+    private func rebuild() {
+        let now = Date()
+        visible = entries.filter { window.includes($0.copiedAt, now: now) }
+        frequent = Frecency.ranked(visible, limit: Self.frequentLimit)
+    }
 
     private let store = ClipboardStore()
     private var timer: Timer?
@@ -41,7 +57,14 @@ final class ClipboardService: ObservableObject {
     ]
 
     init() {
+        if let stored = UserDefaults.standard.string(forKey: Self.windowKey),
+           let restored = HistoryWindow(rawValue: stored) {
+            window = restored
+        }
         entries = store.entries
+        // `didSet` does not fire for assignments made during init, so derive the
+        // filtered views explicitly.
+        rebuild()
         startWatching()
     }
 
