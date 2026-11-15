@@ -887,8 +887,10 @@ was never gated, only reading.
   is worse than 22 MB. The clipboard capture is the first.
 - **The helper is swept on launch.** The adapter writes only when the session
   changes, so a killed app does not reliably close the pipe and the child can
-  outlive it — observed: two orphans after a few relaunches. `pkill -f <script>`
-  at startup, plus an explicit stop on clean quit.
+  outlive it. `pkill -f mediaremote-adapter.pl` at startup, plus an explicit stop on
+  clean quit. Matched on the script's **name**, not its path: the repo's
+  `DevIsland.app` is a symlink to `~/Applications`, so a path-keyed sweep left one
+  helper alive per launch method — observed, two perl processes streaming at once.
 
 Precedence is unchanged: Spotify's AppleScript bridge wins whenever it is actually
 playing, and the stream covers everything else — a browser, Music, VLC.
