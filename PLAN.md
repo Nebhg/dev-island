@@ -26,9 +26,9 @@ outstanding.
 | 10 — view dedup (review 1B) | **done, pixel-verified** |
 
 Goal: turn a single-purpose music notch into a panel host with a clipboard
-history panel, a terminal-history panel, and a file shelf, plus a visual
-upgrade to the music panel. Browser media is **not** assumed any more: §7 shows
-the current transport cannot see it.
+history panel, a terminal-history panel, and a file shelf, plus a visual upgrade to
+the music panel. All four are built, and media is no longer Spotify-only: a browser
+playing YouTube shows its title, channel, position and thumbnail (§7).
 
 ---
 
@@ -186,6 +186,13 @@ The icons are **anchored to the cutout**, not centred in the side band. Panels
 differ in width, so centring would slide all four icons sideways on every switch.
 The band is measured from `activePanel.preferredSize`, not from the window, so the
 icons stay put even while the window is still the larger of the two sizes.
+
+**Keyboard shortcuts**, because the pointer is often nowhere near the notch:
+`⌥⌘1`–`⌥⌘4` jump straight to a panel in display order, `⌥⌘←` / `⌥⌘→` cycle.
+Carbon `RegisterEventHotKey`, not an `NSEvent` monitor — a global key monitor needs
+Accessibility and the island never becomes the active app. Registered only while
+the island is expanded (`Sources/HotKeys.swift`), so they cannot shadow anything
+system-wide when it is closed.
 
 Deliberately **no scroll-to-switch**: a clipboard list needs wheel scrolling,
 and a global scroll handler fights it.
@@ -852,15 +859,17 @@ browser looked identical to Spotify-paused: nothing. Every track the island had
 shown came from the Spotify AppleScript bridge, which wins whenever Spotify runs —
 so the direct path was never exercised.
 
-### Outstanding: artwork arriving after the metadata
+### Artwork arriving after the metadata — fixed
 
-The thumbnail shows in the panel (verified), but it can be **missed** when it
-arrives as its own update. `MediaStream.decode` requires a `title`, and a diff
-payload that only adds `artworkData` has none, so the update is dropped and the
-placeholder stays. That is the likely cause of "title appears, artwork does not".
+The thumbnail can arrive as its **own** update, not with the title. The adapter
+sends the metadata once and then diffs, and a diff carrying only `artworkData` has
+no `title` — so an earlier `decode` that required one discarded it, which is why a
+browser showed the title over the music-note placeholder. The same path carried
+play/pause and position, so a paused video could keep showing as playing.
 
-Fix shape: keep the last decoded track and, for a payload with no title but with
-artwork, attach the image to it rather than discarding the line.
+`MediaStreamDecoder` now treats a title-less payload as a **patch** applied to the
+track already on screen. Thirteen assertions cover it, including that a full
+payload for a *different* item does not inherit the previous track's artwork.
 
 **Placeholder glyph — dropped, not deferred.** An idea to draw a video/play glyph
 instead of a music note for browser sessions. It only applies to a session that
@@ -964,8 +973,8 @@ the panel shows stale commands and raises a notice strip) and
 5. **Reading pasteboard contents may show a macOS paste notice (unverified).**
    This is check 0b and it has never been run deliberately. No notice has been
    observed while capturing, but that is absence of evidence rather than a check.
-   Distinct from the **in-app** paste confirmation in §3/Phase 8 — that one is
-   ours and is being added because auto-paste is otherwise invisible.
+   Distinct from the **in-app** toast in §3, which is ours and is now in place —
+   that one is a deliberate choice; this one is OS behaviour we do not control.
 6. **Signing identity and TCC (resolved, with a correction).** Ad-hoc signing
    produced a new designated requirement on every build, so TCC grants dropped and
    auto-paste failed silently. `build.sh` now signs with `Dev Island Local
@@ -1087,11 +1096,13 @@ any of them can be reversed.
 - **No second collapse flag:** Phase 4 wires the existing `isInteracting` rather than adding an `isStuckWhileDragging`-style flag.
 - **Not building:** Pockets, QuickLook integration, thumbnails, shift-click range selection, and shelf copies — reasons per row in §5.
 
-### Open decisions
+### Open decisions — none
 
-1. ~~**Default panel on first hover**~~ — Clipboard. Done.
-2. ~~**Music as chrome + one panel**~~ — neither. The strip was removed; music
-   lives in the closed notch only. Done.
+Both were settled during the build, recorded so the reasoning is not re-opened:
+
+1. ~~**Default panel on first hover**~~ — Clipboard.
+2. ~~**Music as chrome + one panel**~~ — neither. The strip was removed; music lives
+   in the closed notch (and the system's own live activity sits beside it).
 
 ---
 
@@ -1299,3 +1310,57 @@ spacing drift that nothing else catches: terminal and shelf came out byte-identi
 (0 of 665,600 pixels), and the clipboard differed only in the header band — where
 the trailing inset is now consistently 6 pt, having been 0 on that panel and 6 on
 the others — plus one age label that ticked `16h → 17h` between captures.
+
+---
+
+## 14. Where things live
+
+One line per file, so a reviewer can go straight to the part they care about.
+
+### Shell
+
+| File | Responsibility |
+| --- | --- |
+| `App.swift` | Entry point, single-instance `flock`, no-notch guard, status item, headless preview renderer, `applicationWillTerminate` |
+| `IslandController.swift` | The `NSPanel`, window geometry (grow to `max(old,new)`, settle), global event monitors, drag detector, collapse timing, mouse policy |
+| `IslandModel.swift` | All state: panel selection, geometry, paste delivery, `PlayerService` (sources, polling, toast). The only `ObservableObject` the views observe besides the services |
+| `IslandView.swift` | `IslandRootView`, `NotchShape`, the four panels, the toast, the chips/pills/picker views |
+| `Panels.swift` | `PanelID` (sizes, symbols, order), `PanelProvider` protocol, `PanelHost` lifecycle, the four providers |
+| `HotKeys.swift` | Carbon `RegisterEventHotKey`: `⌥⌘1–4`, `⌥⌘←/→`, installed only while expanded |
+| `FullscreenSupport.swift` | SkyLight space attach so the island survives fullscreen Spaces |
+| `SpotlightState.swift` | Is Spotlight open — drives suppression |
+
+### Media
+
+| File | Responsibility |
+| --- | --- |
+| `SpotifyBridge.swift` | AppleScript read + artwork fetch + transport commands. Takes precedence whenever Spotify is playing |
+| `MediaRemote.swift` | dlsym bridge for **commands only** (play/pause/next/seek); reading is dead on macOS 15.4+ |
+| `MediaStream.swift` | Spawns `/usr/bin/perl` with the vendored adapter, reads JSON lines, restarts on death, sweeps orphans by pid file |
+| `MediaStreamDecoder.swift` | JSON line → `NowPlaying`, including the patch rule (title-less payloads merge into the current track) |
+| `MusicLayout.swift` | The music panel's one size (520 × 190) and the aspect-fitted tile |
+| `CoreAnimationEqualizer.swift` | The chin's three bars, as `CALayer` animations the window server interpolates |
+
+### Panels
+
+| File | Responsibility |
+| --- | --- |
+| `ClipboardService.swift` | Capture loop, blocklist, window filter, cached frecency, paste-back |
+| `ClipboardStore.swift` | `ClipEntry`, `ClipKind`, frecency, 300-entry cap, atomic persistence |
+| `TerminalHistory.swift` | `~/.zsh_history` parser: continuations, lossy decode, `EXTENDED_HISTORY` stamps |
+| `TerminalService.swift` | File watcher, trivia filter, window filter, cached ranking, flush-option notice |
+| `ShelfStore.swift` | File references (path + plain bookmark), dedupe, 30-entry cap, load-time pruning |
+| `IgnoreRules.swift` | The manual trivia deny-list (`ignore-rules.txt`) |
+| `PanelChrome.swift` | Section header, empty state, `FrequentChip`, `HistoryRow` — shared by three panels |
+| `HistoryWindow.swift` | `24h / 7d / 30d / All` as a pure filter, with the untimestamped rule |
+| `AccessibilityPaster.swift` | Posts the synthetic ⌘V, and asks for the grant once per launch |
+| `AppSupport.swift` | The Application Support directory, and the `ISLAND_DATA_DIR` sandbox |
+| `AtomicJSON.swift` | Encode → temp file → chmod `0600` → `replaceItemAt` |
+
+### Build
+
+| File | Notes |
+| --- | --- |
+| `build.sh` | Target arch from `uname -m`, identity resolution, `swiftc`, compiles the vendored framework with `clang`, signs framework-then-bundle, installs to `~/Applications` and registers it |
+| `Info.plist` | `dev.island`, `LSUIElement` (no Dock icon), AppleEvents usage string |
+| `vendor/mediaremote-adapter/` | BSD-3 source, compiled at build time; licence ships in `Contents/Resources` |
