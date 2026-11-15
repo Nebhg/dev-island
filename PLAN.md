@@ -208,21 +208,30 @@ system-wide when it is closed; `⌃⌥↓` is the exception, registered for the 
 lifetime, because a closed island is exactly when it is needed. Its cost is written
 down next to the keys in `Sources/HotKeys.swift`.
 
-**Measured, macOS 26: a taken chord is invisible at registration.** `RegisterEventHotKey`
-returns `noErr` for a chord another process already holds — registering `⌃⌥↓` while a
-second copy of this app held it succeeded, as did registering the same chord twice in
-one process. It also succeeds for chords the system itself owns: `⌘Space` (Spotlight),
-`⌃↑` (Mission Control) and `⌘⇥` (the app switcher) all returned `noErr`.
-So a shortcut that is already spoken for fails at **delivery**, not at registration,
-and the two are indistinguishable from inside the app: there is no error to report and
-no state to show.
+**Measured, macOS 26: registration success is not evidence of availability.**
+`RegisterEventHotKey` returns `noErr` and a usable reference for a chord another
+process already holds — `⌃⌥↓` registered while a second copy of this app held it, and
+the same chord registered twice inside one process. It returns `noErr` for chords the
+system itself owns: `⌘Space` (Spotlight), `⌃↑` (Mission Control) and `⌘⇥` (the app
+switcher). The return value therefore cannot be used to tell someone their shortcut
+is taken, because it never varies.
 
-This is why there is no "your shortcut is taken" warning in the status menu, and why
-one should not be added later — it could never fire. The remedy for a key that does
-not work is to change it, which means the open key would have to be rebindable; that
-work is parked rather than shipped, because its warning half rests on the same false
-premise. A passive `CGEventTap` would make the key work even when something else has
-claimed it, but that is a change to how the key is captured, not a fix to a message.
+**What that does not establish.** Nothing above says what happens at delivery, or
+which process receives an event when two have claimed the same chord. The probe was a
+command-line tool with no `NSApplication`, and it received no hotkey at all —
+including a control chord nothing had claimed — so it measured nothing about delivery.
+*"A taken chord fails at delivery"* and *"a passive `CGEventTap` would make the key
+work"* are hypotheses, not findings.
+
+**Consequence: no "shortcut taken" UI.** A warning keyed off registration status could
+never fire, which is why the status menu has none and why one should not be added
+later. Nor has the failure it was meant to report been observed here: the one occasion
+this key appeared dead, the cause was `⌥↓` pressed without `⌃`. What remains is a
+rebind, so the open key can be moved without editing `Sources/HotKeys.swift` — a real
+feature with a real reason, parked rather than shipped because it was prototyped
+alongside the warning and should not arrive as its leftover. A `CGEventTap` would
+change how the key is captured rather than what is said about it, and is untested
+here.
 
 Deliberately **no scroll-to-switch**: a clipboard list needs wheel scrolling,
 and a global scroll handler fights it.
