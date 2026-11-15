@@ -197,8 +197,24 @@ final class PlayerService: ObservableObject {
     private var spotifyIsSource = false
     private var lastArtworkURL = ""
 
+    /// Latest session reported by the helper process. This is the only working
+    /// way to see anything that is not Spotify — including a browser.
+    private let stream = MediaStream()
+    private var remoteTrack: NowPlaying?
+
     init() {
         remote.startObserving()
+
+        stream.onUpdate = { [weak self] track in
+            guard let self else { return }
+            self.remoteTrack = track
+            self.applyRemote()
+            if ProcessInfo.processInfo.environment["ISLAND_MEDIA_PROBE"] == "1" {
+                let line = "MEDIA \(track?.title ?? "nil") art=\(track?.artwork != nil ? "y" : "n")"
+                FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
+            }
+        }
+        stream.start()
 
         for name in [Notification.Name.nowPlayingDidChange, .playingStateDidChange] {
             observers.append(NotificationCenter.default.addObserver(
@@ -222,6 +238,16 @@ final class PlayerService: ObservableObject {
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
         poll?.invalidate()
+        stream.stop()
+    }
+
+    /// Ends the helper process on a normal quit.
+    ///
+    /// Not only hygiene: a leaked `perl` child would keep streaming to a closed
+    /// pipe. It usually dies on SIGPIPE at the next write, but relying on that is
+    /// a coin flip, so ask.
+    func shutdown() {
+        stream.stop()
     }
 
     /// Runs the 1.5 s AppleScript refresh. Called only while the island is open.
@@ -239,9 +265,12 @@ final class PlayerService: ObservableObject {
         poll = nil
     }
 
+    /// Spotify takes precedence whenever it is actually **playing**: its bridge
+    /// knows the album and the exact position, and it is the source this app was
+    /// built around. Anything else — a browser, Music, VLC — comes from the stream.
     func refresh() {
         guard spotify.isRunning else {
-            useMediaRemote()
+            applyRemote()
             return
         }
         spotify.fetch { [weak self] snapshot in
@@ -250,33 +279,24 @@ final class PlayerService: ObservableObject {
                 self.apply(snapshot)
                 return
             }
-            self.remote.fetch { [weak self] track in
-                guard let self else { return }
-                if let track {
-                    self.spotifyIsSource = false
-                    // Same carry rule as `useMediaRemote`: this is the path that
-                    // runs when Spotify is open but paused, which is the case where
-                    // a browser is playing — the one most likely to publish its
-                    // artwork late.
-                    self.nowPlaying = track.carryingArtwork(from: self.nowPlaying)
-                } else if let snapshot {
-                    self.apply(snapshot)
-                } else {
-                    self.spotifyIsSource = false
-                    self.nowPlaying = nil
-                }
+            // Spotify is open but not playing. A paused Spotify must not mask a
+            // browser that is; the stream knows what is really current.
+            if self.remoteTrack != nil {
+                self.applyRemote()
+            } else if let snapshot {
+                self.apply(snapshot)
+            } else {
+                self.spotifyIsSource = false
+                self.nowPlaying = nil
             }
         }
     }
 
-    private func useMediaRemote() {
-        remote.fetch { [weak self] track in
-            guard let self else { return }
-            self.spotifyIsSource = false
-            // Keep the artwork when this is a re-poll of the same track and the
-            // image has not come through yet — see `carryingArtwork(from:)`.
-            self.nowPlaying = track?.carryingArtwork(from: self.nowPlaying)
-        }
+    /// Publishes what the stream last reported, carrying artwork across updates
+    /// that arrive without it — see `NowPlaying.carryingArtwork(from:)`.
+    private func applyRemote() {
+        spotifyIsSource = false
+        nowPlaying = remoteTrack?.carryingArtwork(from: nowPlaying)
     }
 
     private func apply(_ snapshot: SpotifySnapshot) {

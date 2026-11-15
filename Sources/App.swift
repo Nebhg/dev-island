@@ -65,6 +65,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildStatusItem()
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        controller?.shutdown()
+    }
+
     /// The island is anchored to a physical cutout. Without one there is nothing
     /// to attach to, and the app would otherwise launch into a menu bar item that
     /// silently does nothing. This also covers clamshell use with an external

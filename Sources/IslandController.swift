@@ -232,6 +232,12 @@ final class IslandController {
         set { model.defaultPanel = newValue }
     }
 
+    /// Ends the media helper process. Called on normal termination; see
+    /// `PlayerService.shutdown()` for why that is worth doing at all.
+    func shutdown() {
+        model.player.shutdown()
+    }
+
     /// Exposed for the status item's "Edit Ignore Rules" item.
     func editIgnoreRules() {
         model.ignoreRules.ensureFileExists()

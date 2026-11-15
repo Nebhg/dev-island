@@ -67,19 +67,22 @@ struct NowPlaying: Equatable {
     }
 }
 
-/// Thin bridge over Apple's private MediaRemote framework. Works for every
-/// player on the system (Music, Spotify, Safari, VLC...) because it reads the
-/// same "now playing" channel Control Center uses.
+/// **Commands only.** Sends play/pause/next/previous/seek through Apple's private
+/// MediaRemote framework.
+///
+/// Reading is a different story and lives in `MediaStream`: since macOS 15.4
+/// `MRMediaRemoteGetNowPlayingInfo` answers with an empty dictionary unless the
+/// caller is entitled, which this app is not (measured: eight consecutive calls,
+/// `keys=0`). Sending is not gated, so the commands below still work — which is
+/// also why the split exists rather than routing everything through the helper.
 final class MediaRemote {
     static let shared = MediaRemote()
 
-    private typealias GetInfoFn = @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
     private typealias GetBoolFn = @convention(c) (DispatchQueue, @escaping (Bool) -> Void) -> Void
     private typealias SendFn = @convention(c) (Int32, UnsafeMutableRawPointer?) -> Void
     private typealias RegisterFn = @convention(c) (DispatchQueue) -> Void
     private typealias SetElapsedFn = @convention(c) (Double) -> Void
 
-    private var getInfo: GetInfoFn?
     private var getIsPlaying: GetBoolFn?
     private var sendCommand: SendFn?
     private var register: RegisterFn?
@@ -99,9 +102,6 @@ final class MediaRemote {
             NSLog("DevIsland: MediaRemote unavailable")
             return
         }
-        if let symbol = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo") {
-            getInfo = unsafeBitCast(symbol, to: GetInfoFn.self)
-        }
         if let symbol = dlsym(handle, "MRMediaRemoteGetNowPlayingApplicationIsPlaying") {
             getIsPlaying = unsafeBitCast(symbol, to: GetBoolFn.self)
         }
@@ -120,42 +120,8 @@ final class MediaRemote {
         register?(.main)
     }
 
-    func fetch(_ completion: @escaping (NowPlaying?) -> Void) {
-        guard let getInfo else {
-            completion(nil)
-            return
-        }
-        getInfo(.global(qos: .userInitiated)) { info in
-            let track = MediaRemote.parse(info)
-            DispatchQueue.main.async { completion(track) }
-        }
-    }
-
     func togglePlayPause() { sendCommand?(Command.toggle.rawValue, nil) }
     func next() { sendCommand?(Command.next.rawValue, nil) }
     func previous() { sendCommand?(Command.previous.rawValue, nil) }
     func setElapsedTime(_ seconds: Double) { setElapsedFn?(seconds) }
-
-    private static func parse(_ info: [String: Any]) -> NowPlaying? {
-        guard let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String, !title.isEmpty else {
-            return nil
-        }
-        func number(_ key: String) -> Double {
-            (info[key] as? NSNumber)?.doubleValue ?? 0
-        }
-        var artwork: NSImage?
-        if let data = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data, !data.isEmpty {
-            artwork = NSImage(data: data)
-        }
-        return NowPlaying(
-            title: title,
-            artist: info["kMRMediaRemoteNowPlayingInfoArtist"] as? String ?? "",
-            album: info["kMRMediaRemoteNowPlayingInfoAlbum"] as? String ?? "",
-            duration: number("kMRMediaRemoteNowPlayingInfoDuration"),
-            elapsed: number("kMRMediaRemoteNowPlayingInfoElapsedTime"),
-            rate: number("kMRMediaRemoteNowPlayingInfoPlaybackRate"),
-            timestamp: info["kMRMediaRemoteNowPlayingInfoTimestamp"] as? Date ?? Date(),
-            artwork: artwork
-        )
-    }
 }

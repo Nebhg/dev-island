@@ -18,7 +18,7 @@ checked. §1 states facts verified against the source; §13 tracks the code revi
 | 5 — music visual upgrade | done |
 | 5.5 — strip removed, per-panel sizes, resize rework | done |
 | 5.6 — history windows, `EXTENDED_HISTORY`, sandbox | done, verified against invented data |
-| 6 — browser-media fallback | only if 0a fails (§7) |
+| 6 — media transport (§7) | done; browser session unverified |
 | 7 — paste confirmation | pending |
 | 8 — view dedup (review 1B) | pending |
 
@@ -721,6 +721,12 @@ pitfalls to avoid. Facts, API usage and standard technique are not copyrightable
 a reimplementation written from an understanding of the behaviour is. The
 existing precedent is the notch geometry constants, taken the same way.
 
+**`vendor/mediaremote-adapter` is a different case.** It is **BSD-3-Clause**, not
+GPL, so it is vendored as source and compiled by `build.sh` rather than
+reimplemented — and its copyright notice ships in
+`Contents/Resources/MediaRemoteAdapter-LICENSE.txt` as the licence requires. That
+keeps the app buildable from a clone with no blob, while staying MIT.
+
 ---
 
 ## 6. Music panel — black glass, not colour — done
@@ -806,14 +812,43 @@ Spotify whenever it is running, falling back to MediaRemote. With a browser
 playing and Spotify merely *running but paused*, this ordering is worth
 re-checking — it may mask the browser session.
 
-**"Phase 6" in §8 is the transport question, and it is now required rather than
-hypothetical.** Three routes, none free:
+### The transport, as built
 
-| Route | Cost | Catch |
-| --- | --- | --- |
-| Entitled helper (spawn `/usr/bin/perl`, load a bundled dylib, read JSON) | 1–2 days | Ships a second binary and an IPC path; this is what BoringNotch-class apps do |
-| Per-browser AppleScript / JS | half a day | Needs Develop → *Allow JavaScript from Apple Events* **and** Automation; per-tab targeting means tab enumeration |
-| Accept no browser media | — | The island stays Spotify-only |
+**`MediaStream` + a vendored, source-built helper.** The app spawns
+`/usr/bin/perl <bundle>/Resources/mediaremote-adapter.pl
+<bundle>/Frameworks/MediaRemoteAdapter.framework stream` and reads JSON lines from
+stdout. Commands still go through the direct dlsym path in `MediaRemote`: sending
+was never gated, only reading.
+
+- **Built from source, not shipped as a blob.** 15 plain Objective-C files with no
+  dependencies compile in ~3 s with the system `clang`; `cmake` (which the
+  upstream project expects) is not installed and is not needed. So `git clone &&
+  ./build.sh` remains the whole build.
+- **Artwork arrives as base64 in the payload** and is decoded once per item,
+  cached by `contentItemIdentifier`, because a 75 KB JPEG per update would be
+  absurd. `carryingArtwork(from:)` covers the updates that arrive without it —
+  that rule stopped being inert the moment the transport started working.
+- **Cost, measured:** helper 0.0% CPU / 22 MB; app 0.0% CPU closed and paused.
+  It is the second deliberate exception to "nothing runs unless the panel is
+  visible", because the closed notch shows what is playing and a stale title there
+  is worse than 22 MB. The clipboard capture is the first.
+- **The helper is swept on launch.** The adapter writes only when the session
+  changes, so a killed app does not reliably close the pipe and the child can
+  outlive it — observed: two orphans after a few relaunches. `pkill -f <script>`
+  at startup, plus an explicit stop on clean quit.
+
+Precedence is unchanged: Spotify's AppleScript bridge wins whenever it is actually
+playing, and the stream covers everything else — a browser, Music, VLC.
+
+**Still unverified: a browser session.** Nothing here proves Chrome publishes
+`artworkData`, only that the transport now delivers whatever it publishes. The test
+is one command while a video plays:
+
+```
+/usr/bin/perl DevIsland.app/Contents/Resources/mediaremote-adapter.pl \
+  "$PWD/DevIsland.app/Contents/Frameworks/MediaRemoteAdapter.framework" \
+  stream --no-diff --no-artwork
+```
 
 ---
 
@@ -831,7 +866,7 @@ hypothetical.** Three routes, none free:
 | 5 | ~~Music visuals: black glass, 132 pt artwork, white transport circle~~ **done** | — |
 | 5.5 | ~~Remove the now-playing strip, per-panel sizes, window resized at endpoints only~~ **done** | — |
 | 5.6 | ~~`24h / 7d / 30d / All` windows on both history panels; `EXTENDED_HISTORY`; `ISLAND_DATA_DIR` sandbox~~ **done, verified against invented data** | — |
-| 6 | Browser media transport — **now required**, three routes in §7. Not a fallback, a prerequisite | ½–2 days, needs a decision |
+| 6 | ~~Media transport: vendored `mediaremote-adapter` built from source, streamed through `MediaStream`~~ **done** — browser session itself still unverified, §7 | — |
 | 7 | Paste confirmation in the closed notch, toggleable from the clipboard header (§3) | ~1 hour |
 | 8 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
 
@@ -1089,6 +1124,7 @@ re-check them the same way.
 | `ISLAND_PANEL=music\|clipboard\|terminal\|shelf` | Selects the panel before first paint |
 | `ISLAND_RENDER=<path>` + `ISLAND_RENDER_STATE=expanded\|playing\|wings` + `ISLAND_RENDER_PANEL=…` | Renders a static preview to PNG via `ImageRenderer` |
 | `ISLAND_DATA_DIR=<path>` | Sandboxes **every** store and the single-instance lock: clipboard history, shelf, ignore rules, `instance.lock`. Nothing under the real Application Support directory is read or written, which is how the time windows were exercised against invented data without risking real history. Also gives the test instance its own lock file, so it can run beside a real one |
+| `ISLAND_MEDIA_PROBE=1` | Logs every now-playing update the helper delivers (title, whether artwork decoded) to stderr |
 | `ISLAND_HISTORY=<path>` | Point the terminal panel at a fixture instead of `~/.zsh_history`, so window filters and parsing can be exercised without touching real shell history |
 | `ISLAND_DRAG_PROBE=1` | Logs every `.leftMouseDragged` with both gate inputs (`content`, `count`, `base`, `inside`, `types`) to stderr. The only reliable way to inspect drag events — a standalone binary launched from a terminal does not inherit the app's TCC grant and sees nothing |
 
