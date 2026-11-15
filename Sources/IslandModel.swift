@@ -259,8 +259,7 @@ final class IslandModel: ObservableObject {
         guard autoPaste else { return }
         // Next runloop turn: the pasteboard write and the window teardown both have
         // to land before the keystroke, or the target app pastes the old contents.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-            guard let self else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
             AccessibilityPaster.postPaste()
         }
     }

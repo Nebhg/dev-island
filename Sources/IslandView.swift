@@ -432,21 +432,13 @@ struct ShelfPanel: View {
     }
 
     private var header: some View {
-        HStack(spacing: 0) {
-            Text("SHELF")
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(.white.opacity(0.3))
-            Spacer(minLength: 0)
+        PanelSectionHeader(title: "SHELF") {
             Text(shelf.items.isEmpty
                  ? "drop files here"
                  : "\(shelf.items.count) item\(shelf.items.count == 1 ? "" : "s")")
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.22))
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 6)
-        .frame(height: 14)
     }
 
     private var list: some View {
@@ -791,15 +783,8 @@ struct ClipboardPanel: View {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    /// A label makes the strip read as a deliberate section rather than three
-    /// stray strings floating above the list.
     private var header: some View {
-        HStack(spacing: 0) {
-            Text("FREQUENT")
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(.white.opacity(0.3))
-            Spacer(minLength: 0)
+        PanelSectionHeader(title: "FREQUENT") {
             PasteToggle(enabled: model.autoPasteEnabled) { model.autoPasteEnabled.toggle() }
             PasteConfirmationToggle(enabled: model.pasteConfirmationEnabled) {
                 model.pasteConfirmationEnabled.toggle()
@@ -808,8 +793,6 @@ struct ClipboardPanel: View {
             .padding(.trailing, 8)
             HistoryWindowPicker(window: clipboard.window) { clipboard.window = $0 }
         }
-        .padding(.leading, 8)
-        .frame(height: 14)
     }
 
     /// Most-used entries, one click away. Equal widths and one line each: uneven
@@ -817,33 +800,11 @@ struct ClipboardPanel: View {
     private var chipRow: some View {
         HStack(spacing: 6) {
             ForEach(clipboard.frequent) { entry in
-                Button { paste(entry) } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: entry.kind.symbol)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.45))
-
-                        Text(entry.preview)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.82))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 7)
-                    .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(.white.opacity(0.055))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .strokeBorder(.white.opacity(0.07), lineWidth: 0.5)
-                            )
-                    )
-                }
-                .buttonStyle(.plain)
-                .help("Paste “\(entry.preview.prefix(80))”")
+                FrequentChip(
+                    symbol: entry.kind.symbol,
+                    text: entry.preview,
+                    help: "Paste “\(entry.preview.prefix(80))”"
+                ) { paste(entry) }
             }
         }
         .frame(height: 24)
@@ -853,7 +814,25 @@ struct ClipboardPanel: View {
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(spacing: 1) {
                 ForEach(clipboard.visible) { entry in
-                    ClipRow(entry: entry) { paste(entry) }
+                    HistoryRow(
+                        symbol: entry.kind.symbol,
+                        text: entry.preview,
+                        monospaced: entry.isMonospaced,
+                        help: "Click to paste · ⌥-click to copy only",
+                        action: { paste(entry) }
+                    ) {
+                        // Ages are recomputed on a timeline rather than only when
+                        // the row is rebuilt, so "3m" cannot sit there for an hour
+                        // on a panel left open. `.everyMinute`, not
+                        // `.periodic(from: .now, ...)`: `.now` is re-evaluated every
+                        // render, which restarts the schedule and pins a core.
+                        TimelineView(.everyMinute) { context in
+                            Text(Age.string(entry.copiedAt, now: context.date))
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white.opacity(0.3))
+                                .help("Copied \(entry.copiedAt.formatted(date: .abbreviated, time: .shortened))")
+                        }
+                    }
                         .contextMenu {
                             Button("Copy") { clipboard.write(entry) }
                             Button("Remove", role: .destructive) { clipboard.remove(entry) }
@@ -869,20 +848,19 @@ struct ClipboardPanel: View {
     /// Two different nothings: an empty history, or a window that excludes
     /// everything in it. Saying "nothing copied yet" while 300 entries sit behind
     /// a filter would read as broken.
+    /// Two different nothings: an empty history, or a window that excludes
+    /// everything in it.
     private var emptyState: some View {
         let filtered = !entries.isEmpty
-        return VStack(spacing: 6) {
-            Image(systemName: filtered ? "line.3.horizontal.decrease" : "doc.on.clipboard")
-                .font(.system(size: 18))
-                .foregroundStyle(.white.opacity(0.25))
-            Text(filtered ? "Nothing in the last \(clipboard.window.span)" : "Nothing copied yet")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
-            Text(filtered ? "Pick All to see older items" : "Copy something and it shows up here")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.3))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        return PanelEmptyState(
+            symbol: filtered ? "line.3.horizontal.decrease" : "doc.on.clipboard",
+            title: filtered
+                ? "Nothing in the last \(clipboard.window.span)"
+                : "Nothing copied yet",
+            subtitle: filtered
+                ? "Pick All to see older items"
+                : "Copy something and it shows up here"
+        )
     }
 
     /// ⌥-click copies without pasting, for when the target app is not the one that
@@ -893,59 +871,9 @@ struct ClipboardPanel: View {
     }
 }
 
-struct ClipRow: View {
-    let entry: ClipEntry
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    private var isMonospaced: Bool {
-        entry.kind == .command || entry.kind == .code || entry.kind == .path
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: entry.kind.symbol)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(hovering ? 0.55 : 0.3))
-                .frame(width: 13)
-
-            Text(entry.preview)
-                .font(isMonospaced
-                      ? .system(size: 12, design: .monospaced)
-                      : .system(size: 12))
-                .foregroundStyle(.white.opacity(0.88))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            // Ages are recomputed on a timeline rather than only when the row is
-            // rebuilt, so "3m" cannot sit there for an hour on a panel left open.
-            // `.everyMinute` rather than `.periodic(from: .now, ...)`: `.now` is
-            // re-evaluated on every render, which restarts the schedule and loops.
-            TimelineView(.everyMinute) { context in
-                Text(Self.age(entry.copiedAt, now: context.date))
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.3))
-                    .layoutPriority(1)
-                    .help("Copied \(entry.copiedAt.formatted(date: .abbreviated, time: .shortened))")
-            }
-        }
-        .padding(.leading, 8)
-        .padding(.trailing, 14)
-        .frame(height: 26)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(.white.opacity(hovering ? 0.06 : 0))
-        )
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture(perform: action)
-        .help("Click to paste · ⌥-click to copy only")
-    }
-
-    /// Short relative age: `now`, `4m`, `3h`, `2d`.
-    static func age(_ date: Date, now: Date = Date()) -> String {
+/// Short relative age: `now`, `4m`, `3h`, `2d`.
+enum Age {
+    static func string(_ date: Date, now: Date = Date()) -> String {
         let seconds = max(0, now.timeIntervalSince(date))
         switch seconds {
         case ..<60: return "now"
@@ -955,6 +883,7 @@ struct ClipRow: View {
         }
     }
 }
+
 
 // MARK: - Open: terminal
 
@@ -981,12 +910,7 @@ struct TerminalPanel: View {
     }
 
     private var header: some View {
-        HStack(spacing: 0) {
-            Text("FREQUENT")
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(.white.opacity(0.3))
-            Spacer(minLength: 0)
+        PanelSectionHeader(title: "FREQUENT") {
             // The filtered count, so the number agrees with the rows below it and
             // clicking a window gives immediate feedback.
             Text("\(terminal.visible.count) command\(terminal.visible.count == 1 ? "" : "s")")
@@ -997,41 +921,17 @@ struct TerminalPanel: View {
                 .padding(.trailing, 8)
             HistoryWindowPicker(window: terminal.window) { terminal.window = $0 }
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 6)
-        .frame(height: 14)
     }
 
     private var chipRow: some View {
         HStack(spacing: 6) {
             ForEach(terminal.frequent) { entry in
-                Button { paste(entry) } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "terminal")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.45))
-
-                        Text(entry.display)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.82))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 7)
-                    .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(.white.opacity(0.055))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .strokeBorder(.white.opacity(0.07), lineWidth: 0.5)
-                            )
-                    )
-                }
-                .buttonStyle(.plain)
-                .help("Paste “\(entry.display.prefix(80))”")
+                FrequentChip(
+                    symbol: "terminal",
+                    text: entry.display,
+                    monospaced: true,
+                    help: "Paste “\(entry.display.prefix(80))”"
+                ) { paste(entry) }
             }
         }
         .frame(height: 24)
@@ -1041,7 +941,19 @@ struct TerminalPanel: View {
         ScrollView(.vertical, showsIndicators: false) {
             LazyVStack(spacing: 1) {
                 ForEach(terminal.visible) { entry in
-                    TerminalRow(entry: entry) { paste(entry) }
+                    HistoryRow(
+                        symbol: "terminal",
+                        text: entry.display,
+                        monospaced: true,
+                        help: entry.isSecret
+                            ? "Contains a credential — click to paste, ⌥-click to copy only"
+                            : "Click to paste · ⌥-click to copy only",
+                        action: { paste(entry) }
+                    ) {
+                        Text("\(entry.uses)×")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.white.opacity(0.3))
+                    }
                         .contextMenu {
                             Button("Copy") { model.clipboard.writeText(entry.command) }
                         }
@@ -1053,18 +965,11 @@ struct TerminalPanel: View {
 
     private var emptyState: some View {
         let filtered = !terminal.entries.isEmpty
-        return VStack(spacing: 6) {
-            Image(systemName: filtered ? "line.3.horizontal.decrease" : "terminal")
-                .font(.system(size: 18))
-                .foregroundStyle(.white.opacity(0.25))
-            Text(filtered ? "Nothing in the last \(terminal.window.span)" : "No history yet")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
-            Text(filtered ? "Pick All to see older commands" : "Run something in a new terminal")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.3))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        return PanelEmptyState(
+            symbol: filtered ? "line.3.horizontal.decrease" : "terminal",
+            title: filtered ? "Nothing in the last \(terminal.window.span)" : "No history yet",
+            subtitle: filtered ? "Pick All to see older commands" : "Run something in a new terminal"
+        )
     }
 
     private func paste(_ entry: TerminalEntry) {
@@ -1073,46 +978,6 @@ struct TerminalPanel: View {
     }
 }
 
-struct TerminalRow: View {
-    let entry: TerminalEntry
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "terminal")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(hovering ? 0.55 : 0.3))
-                .frame(width: 13)
-
-            Text(entry.display)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.88))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text("\(entry.uses)×")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.3))
-                .layoutPriority(1)
-        }
-        .padding(.leading, 8)
-        .padding(.trailing, 14)
-        .frame(height: 26)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(.white.opacity(hovering ? 0.06 : 0))
-        )
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture(perform: action)
-        .help(entry.isSecret
-              ? "Contains a credential — click to paste, ⌥-click to copy only"
-              : "Click to paste · ⌥-click to copy only")
-    }
-}
 
 // MARK: - Open: music
 

@@ -47,6 +47,9 @@ struct ClipEntry: Codable, Identifiable, Equatable {
     /// written before `lastCopied` existed.
     var copiedAt: Date { lastCopied ?? firstSeen }
 
+    /// Commands, code and paths read better in a monospaced face; prose does not.
+    var isMonospaced: Bool { kind == .command || kind == .code || kind == .path }
+
     /// Single-line preview with whitespace runs collapsed. Multi-line pastes
     /// otherwise render as ragged two-line rows that make the list look broken.
     var preview: String {
