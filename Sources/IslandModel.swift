@@ -124,14 +124,6 @@ final class IslandModel: ObservableObject {
     /// Expanded: a black panel flush with the top edge, NotchNook style.
     var islandSize: CGSize {
         if expanded {
-            // The music panel widens for a video frame so the thumbnail is not
-            // cropped; see `MusicLayout`.
-            if activePanel == .music {
-                return CGSize(
-                    width: MusicLayout.panelWidth(for: nowPlaying?.artwork),
-                    height: MusicLayout.panelHeight
-                )
-            }
             // The shelf is the one panel whose height follows its contents.
             if activePanel == .shelf {
                 return CGSize(

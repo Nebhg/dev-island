@@ -1160,7 +1160,7 @@ struct MusicPanel: View {
     /// Panel width minus the shell inset (24 each side), the panel inset (8 each
     /// side), the artwork and the gap beside it.
     private var textColumnWidth: CGFloat {
-        MusicLayout.panelWidth(for: track?.artwork) - 48 - 16 - tile.width - 16
+        MusicLayout.panelWidth - 48 - 16 - tile.width - 16
     }
 
     private var subtitle: String {

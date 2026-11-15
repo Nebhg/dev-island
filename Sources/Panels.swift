@@ -52,7 +52,7 @@ enum PanelID: String, CaseIterable, Identifiable {
         switch self {
         case .clipboard, .terminal: CGSize(width: 520, height: 320)
         case .shelf: CGSize(width: 440, height: PanelID.maxShelfHeight)
-        case .music: CGSize(width: 440, height: 190)
+        case .music: CGSize(width: MusicLayout.panelWidth, height: MusicLayout.panelHeight)
         }
     }
 

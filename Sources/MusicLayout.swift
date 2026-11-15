@@ -1,26 +1,19 @@
 import AppKit
 import CoreGraphics
 
-/// The music panel has two layouts, and the **artwork's own shape** picks between
-/// them.
+/// The music panel is **one size** — `520 × 190`, the same width the list panels
+/// use — and only the artwork tile changes shape.
 ///
-/// Not the source: there is no reliable way to tell a video from a song. Spotify
-/// publishes `mediaType: …TypeAudio`, but a browser playing YouTube omits
-/// `mediaType` entirely, and a YouTube *music* video and a YouTube video are the
-/// same thing to the system. The image is the one honest signal — album art is
-/// square, a video frame is 16:9 — so a song posted as a video correctly shows as
-/// a video, because that is what its artwork is.
-///
-/// Square artwork keeps the panel at 440 and the tile square. Wide artwork widens
-/// the panel to 520 (the width the lists already use) and stretches the tile to
-/// the frame's aspect, so nothing is cropped.
+/// An earlier version widened the panel for video artwork and kept it narrow for
+/// album art. That looked clever and behaved badly: the island changed width every
+/// time the track changed, and because the browser publishes a 16:9 thumbnail for
+/// *every* YouTube video, a music video and a lecture pulled the same lever. One
+/// panel size, always. The tile still follows the image's aspect so neither a
+/// square cover nor a 16:9 frame is cropped, and that is the only thing that
+/// varies.
 enum MusicLayout {
+    static let panelWidth: CGFloat = 520
     static let panelHeight: CGFloat = 190
-
-    /// Album art.
-    static let squarePanelWidth: CGFloat = 440
-    /// A video frame: wide enough for a 16:9 tile plus a usable text column.
-    static let widePanelWidth: CGFloat = 520
 
     static let artworkHeight: CGFloat = 132
     /// A 16:9 tile at this height is ~235 pt; the cap only stops something absurd
@@ -43,7 +36,4 @@ enum MusicLayout {
         return CGSize(width: width, height: artworkHeight)
     }
 
-    static func panelWidth(for image: NSImage?) -> CGFloat {
-        isWide(image) ? widePanelWidth : squarePanelWidth
-    }
 }
