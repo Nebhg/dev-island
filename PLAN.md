@@ -20,10 +20,9 @@ review; §11 records signing and installation.
 | 5.6 — history windows, `EXTENDED_HISTORY`, sandbox | done, verified against invented data |
 | 6 — media transport (§7) | done, verified with a browser |
 | 7 — browser artwork in a title-less diff | done |
-| 8 — paste confirmation | pending |
+| 8 — paste confirmation | **pending (next)** |
 | 9 — one music-panel size, aspect-fitted tile | done, verified live |
-| 10 — video placeholder glyph | pending, maybe unnecessary |
-| 11 — view dedup (review 1B) | pending |
+| 10 — view dedup (review 1B) | pending |
 
 Goal: turn a single-purpose music notch into a panel host with a clipboard
 history panel, a terminal-history panel, and a file shelf, plus a visual
@@ -855,10 +854,11 @@ placeholder stays. That is the likely cause of "title appears, artwork does not"
 Fix shape: keep the last decoded track and, for a payload with no title but with
 artwork, attach the image to it rather than discarding the line.
 
-**Fallback if a session genuinely has no artwork:** the gradient placeholder
-currently draws a music note. A video/play glyph reads better for a browser
-session, and `bundleIdentifier` / `mediaType` are both available to choose with.
-Deferred until the diff bug above is fixed — it may not be needed at all.
+**Placeholder glyph — dropped, not deferred.** An idea to draw a video/play glyph
+instead of a music note for browser sessions. It only applies to a session that
+publishes no artwork at all, which no browser has been seen to do — YouTube always
+produces a thumbnail — so it would be code for a case that does not occur. If one
+ever shows up with the gradient placeholder, that is the moment to revisit it.
 
 ### The transport, as built
 
@@ -906,7 +906,7 @@ the fastest way to inspect what a player is publishing:
 | Phase | Work | Effort |
 | --- | --- | --- |
 | 0a | Test YouTube/Chrome against the island (§7) | **done, works** — title, channel, duration, position, thumbnail |
-| 0b | Does *reading* the pasteboard trigger a macOS "pasted from" banner? (Distinct from the in-app paste confirmation in §3) | not run |
+| 0b | Does *reading* the pasteboard make **macOS** raise a permission prompt? System behaviour, not ours — the in-app tick is Phase 8 and unrelated | not run; no prompt has ever appeared despite a read on every copy, so this is close to answered |
 | 1 | ~~Panel shell: `PanelID`, provider protocol, registry, window resizing, icon nav, default panel~~ **done** | — |
 | 1.5 | ~~Rename to `dev.island` + `NSAppleEventsUsageDescription`; self-signed cert; `build.sh` signing; verify grants survive a rebuild~~ **done** | — |
 | 2 | ~~Clipboard provider + frequent strip + `AccessibilityPaster`~~ **done** | — |
@@ -919,8 +919,7 @@ the fastest way to inspect what a player is publishing:
 | 7 | ~~Artwork arriving in a title-less diff was dropped~~ **done** — patches now applied; browser thumbnails work | — |
 | 8 | Paste confirmation in the closed notch, toggleable from the clipboard header (§3) | ~1 hour |
 | 9 | ~~One music-panel size; the tile follows the artwork's aspect so a thumbnail is not cropped~~ **done, verified with a live session** | — |
-| 10 | Video placeholder glyph for sessions with no artwork — only if a session ever publishes none (§7) | ~30 min, maybe unnecessary |
-| 11 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
+| 10 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
 
 Phases 1–5.6 are complete. The panel shell did turn each feature into a provider
 plus a view: the clipboard and terminal panels each landed without touching the
@@ -1253,7 +1252,7 @@ them were already fixed when the document was read, because it was taken before
 | # | Finding | Status |
 | --- | --- | --- |
 | 1A | Application Support boilerplate in four places | **done** — `AppSupport.directory()` (`ff2505e`) |
-| 1B | Duplicated panel subviews | **pending** — Phase 11, see below |
+| 1B | Duplicated panel subviews | **pending** — Phase 10, see below |
 | 1C | Atomic JSON write duplicated in both stores | **done** — `AtomicJSON.write` (`ff2505e`) |
 | 2.1 | `PlaceholderPanel` unreachable since `ExpandedPanel` became exhaustive | **done** — deleted (`674f7e3`) |
 | 2.2 | Orphaned doc comment left mid-sentence above `NoticeStrip` | **done** — deleted (`674f7e3`) |
