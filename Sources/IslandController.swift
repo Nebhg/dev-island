@@ -50,6 +50,15 @@ final class IslandController {
     private var dragOpenedShelf = false
     private let hotKeys = HotKeys()
 
+    /// Set when the island was opened from outside the hover path — the toggle key or
+    /// the status menu.
+    ///
+    /// While it is set, "the pointer is not over the island" must not close it. Hover
+    /// is what normally drives expansion, so without this the first mouse event
+    /// anywhere else reads as "left the island" and collapses it about 30 ms after it
+    /// opened, which made the menu items look like they did nothing at all.
+    private var pinnedOpen = false
+
     /// `ISLAND_DRAG_PROBE=1` logs every dragged event with both gate signals, so
     /// risk 10 can be answered on a machine where this app holds the Accessibility
     /// grant — a standalone binary launched from a terminal does not inherit it.
@@ -105,7 +114,9 @@ final class IslandController {
         // which is what keeps a synthetic ⌘V going to the app the user was in.
         panel.becomesKeyOnlyIfNeeded = true
 
-        // Panel shortcuts only live while the island is open.
+        // Panel shortcuts only live while the island is open. The toggle key is
+        // registered separately and stays armed for the life of the process, since
+        // a closed island is exactly when it is needed.
         hotKeys.onPanel = { [weak self] index in
             guard let self, index < PanelID.allCases.count else { return }
             self.model.selectPanel(PanelID.allCases[index])
@@ -113,6 +124,10 @@ final class IslandController {
         hotKeys.onCycle = { [weak self] step in
             self?.model.cyclePanel(by: step)
         }
+        hotKeys.onToggle = { [weak self] in
+            self?.toggleExpanded()
+        }
+        hotKeys.installToggle()
 
         updateGeometry()
         installMonitors()
@@ -232,8 +247,41 @@ final class IslandController {
         refreshMousePolicy()
     }
 
+    /// ⌃⌥↓.
     func toggleExpanded() {
-        model.toggleExpanded()
+        if model.expanded {
+            pinnedOpen = false
+            model.collapse()
+        } else {
+            expandWithoutPointer()
+        }
+    }
+
+    /// Opens the island from the toggle key or the status menu.
+    ///
+    /// Two things the hover path never has to deal with:
+    ///
+    /// - The pointer is not on the notch, and it may never come. `pinnedOpen` holds
+    ///   the island up until it arrives (or the user clicks away), instead of letting
+    ///   the next mouse event collapse what was just asked for.
+    /// - The island may still be flagged `suppressed` from a Spotlight handoff. That
+    ///   flag normally clears on the next pointer movement, so a pointer-driven open
+    ///   never notices, but a menu or keypress open would hit `expand()`'s guard and
+    ///   silently do nothing.
+    func expandWithoutPointer() {
+        if model.suppressed, !SpotlightState.isOpen {
+            model.suppressed = false
+            refreshMousePolicy()
+        }
+        // A Spotlight handoff takes the panel out of the window list as well as
+        // clearing `suppressed`; the hover path re-orders it on the way in, so the
+        // menu and key paths have to do the same thing here.
+        if !panel.isVisible {
+            FullscreenSupport.attach(panel)
+            panel.orderFrontRegardless()
+        }
+        model.expand()
+        pinnedOpen = model.expanded
     }
 
     /// Exposed for the status item's "Default Panel" submenu.
@@ -275,6 +323,7 @@ final class IslandController {
     }
 
     func collapse() {
+        pinnedOpen = false
         model.collapse()
     }
 
@@ -516,6 +565,18 @@ final class IslandController {
             }
         }
 
+        // Opened by key or menu means "stay up" — do not let movement outside the
+        // island close it before the hand gets there. Cleared as soon as the pointer
+        // is inside, or when a click lands outside it.
+        if pinnedOpen {
+            if inside || event.type == .leftMouseDown {
+                pinnedOpen = false
+            } else {
+                wasInside = false
+                return
+            }
+        }
+
         let entering = inside && !wasInside
         wasInside = inside
 
@@ -586,6 +647,7 @@ final class IslandController {
             model.player.startPolling()
             hotKeys.install()
         } else {
+            pinnedOpen = false
             stopSpotlightWatch()
             model.player.stopPolling()
             hotKeys.uninstall()

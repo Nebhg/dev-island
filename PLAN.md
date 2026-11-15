@@ -193,7 +193,14 @@ The band is measured from `activePanel.preferredSize`, not from the window, so t
 icons stay put even while the window is still the larger of the two sizes.
 
 **Keyboard shortcuts**, because the pointer is often nowhere near the notch:
-`⌥⌘1`–`⌥⌘4` jump straight to a panel in display order, `⌥⌘←` / `⌥⌘→` cycle.
+`⌃⌥↓` opens or closes the island, `⌥1`–`⌥4` jump straight to a panel in display
+order, `⌃⌥←` / `⌃⌥→` cycle (as do `⌥Tab` / `⌥⇧Tab`).
+`⌘1`–`⌘4` is what the hand reaches for and what the system takes first — ⌘-number
+and ⌃-number are claimed by tab switching and Spaces before a Carbon hotkey is
+consulted, so the previous `⌥⌘1`–`⌥⌘4` set never reliably arrived. Plain `⌥` is
+unclaimed. The open key keeps a second modifier because, unlike the panel keys, it
+is registered for the whole process — a bare `⌥↓` would take next-paragraph away
+from every text editor all day.
 Carbon `RegisterEventHotKey`, not an `NSEvent` monitor — a global key monitor needs
 Accessibility and the island never becomes the active app. Registered only while
 the island is expanded (`Sources/HotKeys.swift`), so they cannot shadow anything
@@ -1349,7 +1356,7 @@ One line per file, so a reviewer can go straight to the part they care about.
 | `IslandModel.swift` | All state: panel selection, geometry, paste delivery, `PlayerService` (sources, polling, toast). The only `ObservableObject` the views observe besides the services |
 | `IslandView.swift` | `IslandRootView`, `NotchShape`, the four panels, the toast, the chips/pills/picker views |
 | `Panels.swift` | `PanelID` (sizes, symbols, order), `PanelProvider` protocol, `PanelHost` lifecycle, the four providers |
-| `HotKeys.swift` | Carbon `RegisterEventHotKey`: `⌥⌘1–4`, `⌥⌘←/→`, installed only while expanded |
+| `HotKeys.swift` | Carbon `RegisterEventHotKey`: `⌃⌥↓` toggle (process lifetime), `⌥1–4` + `⌃⌥←/→` + `⌥Tab` (only while expanded) |
 | `FullscreenSupport.swift` | SkyLight space attach so the island survives fullscreen Spaces |
 | `SpotlightState.swift` | Is Spotlight open — drives suppression |
 

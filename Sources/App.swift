@@ -148,8 +148,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.delegate = self
-        menu.addItem(makeItem("Expand Island", #selector(toggle)))
-        menu.addItem(makeItem("Collapse Island", #selector(collapse)))
+        // Expand only. A collapse item could never be clicked in the state it
+        // applied to: moving the pointer up to the status item collapses the island
+        // before the menu is reachable.
+        menu.addItem(makeItem("Expand Island", #selector(expand)))
         menu.addItem(.separator())
 
         let defaultItem = NSMenuItem(title: "Default Panel", action: nil, keyEquivalent: "")
@@ -181,8 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    @objc private func toggle() { controller?.toggleExpanded() }
-    @objc private func collapse() { controller?.collapse() }
+    @objc private func expand() { controller?.expandWithoutPointer() }
     @objc private func quit() { NSApp.terminate(nil) }
     @objc private func editIgnoreRules() { controller?.editIgnoreRules() }
 

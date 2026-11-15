@@ -81,8 +81,10 @@ commands have no timestamps and only appear under "All".
 ## Using it
 
 - **Open** by hovering the notch; it closes shortly after the pointer leaves.
-- **Switch panels** with the icons either side of the cutout, `⌥⌘1`–`⌥⌘4`, or
-  `⌥⌘←` / `⌥⌘→` to cycle. The shortcuts only exist while the island is open.
+- **Open from the keyboard** with `⌃⌥↓`, which toggles the island open or closed.
+- **Switch panels** with the icons either side of the cutout, `⌥1`–`⌥4`, or
+  `⌃⌥←` / `⌃⌥→` to cycle (also `⌥Tab` / `⌥⇧Tab`). The panel shortcuts only exist
+  while the island is open; the open key is always armed.
 - **Click a row** to paste into whatever had focus, or copy. `⌥`-click always
   copies. The **Autopaste** pill toggles the default and is remembered; either way
   a short toast says what happened — `Auto-pasted` or `Copied to clipboard`.
