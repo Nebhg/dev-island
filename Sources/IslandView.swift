@@ -266,27 +266,6 @@ struct GlassSurface: View {
     }
 }
 
-/// Whether the notch acknowledges a click at all.
-///
-/// A separate switch from autopaste because they answer different questions: "does
-/// a click paste" and "does it say so". Someone may want the paste without the
-/// animation, or vice versa.
-struct PasteConfirmationToggle: View {
-    let enabled: Bool
-    let toggle: () -> Void
-
-    var body: some View {
-        Button(action: toggle) {
-            Image(systemName: enabled ? "checkmark.circle.fill" : "checkmark.circle")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(enabled ? 0.75 : 0.3))
-                .frame(width: 14, height: 14)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(enabled ? "The notch confirms each click — click to stop" : "The notch is silent after a click — click to confirm")
-    }
-}
 
 /// What a click on a row does, and the switch for it.
 ///
@@ -786,11 +765,7 @@ struct ClipboardPanel: View {
     private var header: some View {
         PanelSectionHeader(title: "FREQUENT") {
             PasteToggle(enabled: model.autoPasteEnabled) { model.autoPasteEnabled.toggle() }
-            PasteConfirmationToggle(enabled: model.pasteConfirmationEnabled) {
-                model.pasteConfirmationEnabled.toggle()
-            }
-            .padding(.leading, 8)
-            .padding(.trailing, 8)
+                .padding(.trailing, 8)
             HistoryWindowPicker(window: clipboard.window) { clipboard.window = $0 }
         }
     }

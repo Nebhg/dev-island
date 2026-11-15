@@ -47,13 +47,6 @@ final class IslandModel: ObservableObject {
     static let toastHeight: CGFloat = 26
     static let toastGap: CGFloat = 8
 
-    /// Whether the acknowledgement is drawn at all. Off means no widening, not a
-    /// dimmed one.
-    @Published var pasteConfirmationEnabled: Bool {
-        didSet { UserDefaults.standard.set(pasteConfirmationEnabled, forKey: Self.confirmationKey) }
-    }
-
-    private static let confirmationKey = "pasteConfirmationEnabled"
     private var toastWork: DispatchWorkItem?
 
     /// Auto-paste on every click. Off means copy-only, which is the same thing
@@ -120,7 +113,6 @@ final class IslandModel: ObservableObject {
         self.defaultPanel = initial
         self.activePanel = initial
         self.autoPasteEnabled = UserDefaults.standard.object(forKey: Self.autoPasteKey) as? Bool ?? true
-        self.pasteConfirmationEnabled = UserDefaults.standard.object(forKey: Self.confirmationKey) as? Bool ?? true
         self.terminal = TerminalService(rules: ignoreRules)
 
         player.$nowPlaying
@@ -267,7 +259,6 @@ final class IslandModel: ObservableObject {
     /// Shows the message for ~1.2 s. One timer, replaced rather than stacked, so
     /// repeated clicks cannot leave it on screen.
     private func showPasteToast(_ toast: PasteToast) {
-        guard pasteConfirmationEnabled else { return }
         toastWork?.cancel()
         pasteToast = toast
         let work = DispatchWorkItem { [weak self] in
