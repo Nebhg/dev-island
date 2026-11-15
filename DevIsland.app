@@ -1,1 +1,0 @@
-/Users/haras-gummer/Applications/Dev Island.app

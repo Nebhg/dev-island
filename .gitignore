@@ -1,5 +1,7 @@
-# Build output
-DevIsland.app/
+# Build output. The bundle is installed to ~/Applications and left here as a
+# symlink to it, so ignore both the directory and the link.
+DevIsland.app
+/DevIsland.app
 *.o
 .build/
 DerivedData/
