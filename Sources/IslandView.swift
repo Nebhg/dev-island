@@ -82,10 +82,7 @@ struct IslandRootView: View {
             ExpandedPanel(model: model)
                 .transition(.opacity)
         } else {
-            // Nothing: closed, the window is only the cutout, and macOS already
-            // draws the now-playing live activity beside the notch. See
-            // `IslandModel.islandSize`.
-            Color.clear
+            WingContent(model: model)
         }
     }
 }
@@ -1383,5 +1380,39 @@ struct MarqueeText: View {
             }
         }
         .frame(width: width, alignment: .leading)
+    }
+}
+
+/// What the closed island draws in the chin while music plays: artwork on one side,
+/// a waveform on the other.
+///
+/// macOS also draws a now-playing live activity further along the menu bar. Both are
+/// visible on purpose — this one is attached to the notch, which is where the island
+/// lives, and it is the only one that can sit inside the cutout's own band. It is
+/// affordable because `CoreAnimationEqualizer` runs on the window server.
+struct WingContent: View {
+    @ObservedObject var model: IslandModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if let track = model.nowPlaying {
+                ArtworkView(image: track.artwork, size: 20, radius: 4)
+                    .padding(.leading, 6)
+            }
+
+            Spacer(minLength: 0)
+
+            if model.nowPlaying?.isPlaying == true {
+                CoreAnimationEqualizer()
+                    .frame(width: 11.5, height: 12)
+                    .padding(.trailing, 8)
+            } else if model.nowPlaying != nil {
+                Image(systemName: "pause.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .padding(.trailing, 10)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

@@ -149,6 +149,17 @@ final class IslandController {
             .sink { [weak self] expanded in self?.handleExpansion(expanded) }
             .store(in: &cancellables)
 
+        // The chin appearing or disappearing changes the closed window's size as
+        // well as what it covers, so the frame and the click-through policy both
+        // have to follow it.
+        model.$nowPlaying
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateGeometry()
+                self?.refreshMousePolicy()
+            }
+            .store(in: &cancellables)
+
         // Switching panel changes the island's size, so the window has to be
         // resized in the same turn as the model changes. Otherwise the hot zone
         // and the frame disagree for a frame and the island collapses itself.
@@ -371,15 +382,16 @@ final class IslandController {
     /// only the physical cutout — no pixels, nothing behind it — so it stays
     /// interactive and can act as a drop target. Closed while playing, the chin
     /// covers live menu-bar space, so it must let clicks through.
-    /// Closed, the window is only the camera cutout, so it stays interactive: it is
-    /// the drop target for dragging a file at the notch, and there is no menu bar
-    /// underneath it to steal clicks from.
-    ///
-    /// This used to branch on `isPlaying`, because the playing chin covered live
-    /// menu bar and had to let clicks through. The chin is gone — macOS draws the
-    /// now-playing live activity itself — so the special case went with it.
     private func refreshMousePolicy() {
-        panel.ignoresMouseEvents = !model.expanded
+        if model.expanded {
+            panel.ignoresMouseEvents = false
+        } else if model.nowPlaying?.isPlaying == true {
+            // The playing chin overlaps live menu bar, so it must let clicks
+            // through while still acting as a drop target through the drag detector.
+            panel.ignoresMouseEvents = true
+        } else {
+            panel.ignoresMouseEvents = false
+        }
     }
 
     // MARK: - Hover
