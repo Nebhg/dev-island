@@ -133,7 +133,7 @@ final class IslandController {
             case .step(let step):
                 // One registration, two meanings. The chord is the same; only the
                 // mode decides whether it cycles panels or moves the selected row.
-                if self.model.keyboardSelectionActive {
+                if self.model.keyboardMode {
                     self.model.moveSelection(by: step)
                 } else {
                     self.model.cyclePanel(by: step)
@@ -172,7 +172,7 @@ final class IslandController {
             // user somewhere they did not expect them taken. This notification is
             // also the ⌘Tab path — Spotlight, watched separately below, is the case
             // that re-suppresses the island rather than closing it.
-            if self.model.keyboardSelectionActive {
+            if self.model.keyboardMode {
                 self.model.collapse()
             }
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
@@ -382,18 +382,16 @@ final class IslandController {
     /// pins the island, so a shortcut that left it open would leave it stuck open with
     /// nothing driving it.
     private func toggleKeyboardSelection() {
-        if model.keyboardSelectionActive, model.expanded {
+        if model.keyboardMode, model.expanded {
             model.collapse()
             return
         }
-        // Captured before expanding, and by the same rule the drag path uses: an
-        // open island's `activePanel` is what the user is looking at, a closed one
-        // has not chosen yet, so it is what hover would have shown.
-        let restore = model.expanded ? model.activePanel : model.panelOnOpen
         expandWithoutPointer()
         // Spotlight open, or `expand()` refused: there is nothing to select from.
         guard model.expanded else { return }
-        model.beginKeyboardSelection(restoring: restore)
+        // The clipboard shortcut lands on the clipboard. It arms the same mode the
+        // toggle key arms — there is no separate "picker".
+        model.beginKeyboardMode(on: .clipboard)
     }
 
     private func handlePickerKey(_ key: HotKeys.PickerKey) {
@@ -857,17 +855,16 @@ final class IslandController {
         collapseWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             // The single authority on whether a collapse may happen. `pinnedOpen` and
-            // the keyboard selection are separate reasons with one guard: a pinned
-            // island was not asked to close by the pointer, and a selected row is
-            // driven from the keyboard, where the pointer being elsewhere is the
-            // normal case. Gating only one of them — as the two branches this was
-            // merged from each did — leaves the other relying on the call order in
-            // `handleMouse`.
+            // the keyboard mode are separate reasons with one guard: a pinned island
+            // was not asked to close by the pointer, and a keyboard-driven one is
+            // where the pointer being elsewhere is the normal case. Gating only one of
+            // them — as the two branches this was merged from each did — leaves the
+            // other relying on the call order in `handleMouse`.
             guard let self,
                   !self.model.locksOpen,
                   !self.model.isInteracting,
                   !self.model.pinnedOpen,
-                  !self.model.keyboardSelectionActive,
+                  !self.model.keyboardMode,
                   !self.inHotZone(NSEvent.mouseLocation)
             else { return }
             self.model.collapse()

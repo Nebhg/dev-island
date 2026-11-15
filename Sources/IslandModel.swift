@@ -186,46 +186,54 @@ final class IslandModel: ObservableObject {
         var id: String
     }
 
-    /// Nil when the keyboard is not driving a row. A row id of `""` means the list
-    /// is empty, which no entry's id can be, so every lookup fails and Return does
-    /// nothing — the empty-list behaviour, with no separate flag for it.
+    /// True while the island is being driven from the keyboard.
+    ///
+    /// Separate from `listSelection`, and the separation is the point: the mode
+    /// outlives any particular row. An empty list is still "in the mode" with nothing
+    /// to paste, and an empty list must not be a reason to drop the keys — the arrows
+    /// can still reach the other one.
+    @Published private(set) var keyboardMode = false
+
+    /// Which row the mode is on. Nil whenever the mode is off, because it is armed on
+    /// a list panel and a switch to anything else ends it.
+    ///
+    /// A row id of `""` means the list is empty. No entry's id can be that, so every
+    /// lookup fails and the row keys do nothing — the empty-list behaviour, with no
+    /// separate flag for it.
     @Published private(set) var listSelection: ListSelection?
-
-    var keyboardSelectionActive: Bool { listSelection != nil }
-
-    /// What to put back when the selection ends. The shortcut is a detour, not a
-    /// choice of panel, so it must not become the panel hover reopens on.
-    private var panelBeforeSelection: PanelID?
 
     /// Whether `id` in `panel`'s list is the selected row.
     func isSelected(_ panel: PanelID, id: String) -> Bool {
         listSelection?.panel == panel && listSelection?.id == id
     }
 
-    /// Starts the mode on the clipboard, with its first row selected.
+    /// Arms the mode on `panel`, with its first row selected.
     ///
-    /// `restoring` is captured by the caller **before** expanding: `expand()` writes
-    /// `activePanel`, so a panel read afterwards would be the one the shortcut chose
-    /// rather than the one the user was looking at.
-    func beginKeyboardSelection(restoring panel: PanelID) {
-        if listSelection == nil { panelBeforeSelection = panel }
-        selectPanel(.clipboard)
-        listSelection = ListSelection(panel: .clipboard, id: rowID(of: .clipboard, at: 0))
+    /// `panel` has to be a list. The mode's keys are bare, so arming it somewhere they
+    /// cannot act would take those keys from every app and offer nothing in return —
+    /// no highlight, no paste, no visible reason the arrows stopped arriving.
+    func beginKeyboardMode(on panel: PanelID) {
+        guard panel == .clipboard || panel == .terminal else { return }
+        // Panel before flag: whoever observes `keyboardMode` to register keys must
+        // not see the mode on while the island is still showing the old panel.
+        activePanel = panel
+        keyboardMode = true
+        listSelection = ListSelection(panel: panel, id: rowID(of: panel, at: 0))
     }
 
-    /// Ends the mode. Every exit goes through here — paste, copy, escape, panel
-    /// change, outside click, app switch, collapse — which is what bounds the
-    /// lifetime of the picker's unmodified keys.
-    func endKeyboardSelection() {
-        guard listSelection != nil else { return }
+    /// The only place `keyboardMode` is cleared.
+    ///
+    /// Two callers, one assignment. `collapse()` covers every exit the user makes;
+    /// `retargetSelection` covers a panel change to something that is not a list. The
+    /// invariant that matters is that the bare keys cannot outlive the mode, and a
+    /// second assignment site is exactly how that invariant gets broken.
+    private func endKeyboardMode() {
+        // `@Published` fires on every assignment even when the value is unchanged,
+        // and `collapse()` runs on every hover-out. Skipping the no-op keeps the
+        // publish — and the view invalidation behind it — to the times it is real.
+        guard keyboardMode || listSelection != nil else { return }
+        keyboardMode = false
         listSelection = nil
-        let previous = panelBeforeSelection
-        panelBeforeSelection = nil
-        // Only while the clipboard is still showing: moving to another panel is a
-        // real choice and must not be undone.
-        if let previous, activePanel == .clipboard {
-            activePanel = previous
-        }
     }
 
     func moveSelection(by step: Int) {
@@ -262,17 +270,17 @@ final class IslandModel: ObservableObject {
     /// one that had focus.
     ///
     /// The teardown is explicit rather than left to `collapse()`. The keys are only
-    /// safe because their lifetime is bounded, and reaching
-    /// `endKeyboardSelection` three calls deep inside a function whose job is
-    /// pasting is not a guarantee — it is a coincidence that happens to hold today.
+    /// safe because their lifetime is bounded, and reaching `endKeyboardMode` three
+    /// calls deep inside a function whose job is pasting is not a guarantee — it is a
+    /// coincidence that happens to hold today.
     func pasteSelection(copyOnly: Bool) {
         guard let selection = listSelection, let row = selectedRowID else {
-            // Not a list, or nothing selected: nothing to paste, but the mode still
+            // Nothing selected, or an empty list: nothing to paste, but the mode still
             // has to end or the keys stay registered.
-            endKeyboardSelection()
+            endKeyboardMode()
             return
         }
-        endKeyboardSelection()
+        endKeyboardMode()
         paste(panel: selection.panel, rowID: row, autoPaste: !copyOnly)
     }
 
@@ -314,20 +322,20 @@ final class IslandModel: ObservableObject {
         }
     }
 
-    /// Keeps the mode tied to a history list. Switching to anything else — a panel
-    /// with no rows, Settings, the shelf — ends it.
+    /// Keeps the mode on a list. Switching to anything else — Settings, the shelf,
+    /// Music — ends it, because the mode's keys are bare and there is nothing on those
+    /// panels for them to act on.
+    ///
+    /// An **empty** list keeps the selection, with `""` as its id. Nothing matches, so
+    /// the row keys do nothing, but the mode survives: passing through an empty list
+    /// on the way to the other one is an ordinary move, not a reason to drop the keys.
     private func retargetSelection(to panel: PanelID) {
-        guard listSelection != nil else { return }
-        let first = rowID(of: panel, at: 0)
-        guard !first.isEmpty else {
-            // The panel was chosen deliberately, so ending the mode here must not put
-            // the old one back — which it otherwise would when the switch is away
-            // from the clipboard, since that is the panel it restores from.
-            panelBeforeSelection = nil
-            endKeyboardSelection()
+        guard keyboardMode else { return }
+        guard panel == .clipboard || panel == .terminal else {
+            endKeyboardMode()
             return
         }
-        listSelection = ListSelection(panel: panel, id: first)
+        listSelection = ListSelection(panel: panel, id: rowID(of: panel, at: 0))
     }
 
     private var cancellables = Set<AnyCancellable>()
@@ -462,12 +470,15 @@ final class IslandModel: ObservableObject {
     }
 
     func collapse() {
+        // Above the guard, deliberately. A collapse that arrives with `expanded`
+        // already false must still disarm the mode: its keys are registered
+        // globally, and this is the only way out of them.
+        endKeyboardMode()
         guard expanded else { return }
         expanded = false
         // One place, because `collapse()` is reached from every hiding path: the
         // hover timer, the toggle key, a paste, Spotlight, a display change.
         pinnedOpen = false
-        endKeyboardSelection()
         if activePanel == .settings {
             activePanel = lastContentPanel
         }
