@@ -376,10 +376,14 @@ final class IslandController {
     // MARK: - Keyboard selection
 
     /// The clipboard shortcut: opens the island on the clipboard with a row
-    /// selected, or ends that mode if it is already on.
+    /// selected, or closes it if that mode is already on.
+    ///
+    /// Closing rather than only dropping the selection matters: `expandWithoutPointer`
+    /// pins the island, so a shortcut that left it open would leave it stuck open with
+    /// nothing driving it.
     private func toggleKeyboardSelection() {
         if model.keyboardSelectionActive, model.expanded {
-            model.endKeyboardSelection()
+            model.collapse()
             return
         }
         // Captured before expanding, and by the same rule the drag path uses: an

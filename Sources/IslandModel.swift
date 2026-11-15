@@ -320,6 +320,10 @@ final class IslandModel: ObservableObject {
         guard listSelection != nil else { return }
         let first = rowID(of: panel, at: 0)
         guard !first.isEmpty else {
+            // The panel was chosen deliberately, so ending the mode here must not put
+            // the old one back — which it otherwise would when the switch is away
+            // from the clipboard, since that is the panel it restores from.
+            panelBeforeSelection = nil
             endKeyboardSelection()
             return
         }

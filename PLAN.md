@@ -450,7 +450,7 @@ modelled on Windows' ⊞V:
 
 | Key | Does |
 | --- | --- |
-| `⌃⌘V` | Opens the island on the clipboard with the first row selected; pressed again, ends the mode |
+| `⌃⌘V` | Opens the island on the clipboard with the first row selected; pressed again, closes it |
 | `⌃⌥←` / `⌃⌥→` | Move the selection; the list scrolls only as far as it must |
 | `⌥1`–`⌥5` | Switch panel, and re-target the selection to that list's first row |
 | `↩`, keypad Enter | Paste the selection — the click path, so Autopaste applies |
