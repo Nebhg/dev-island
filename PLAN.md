@@ -938,13 +938,21 @@ the panel shows stale commands and raises a notice strip) and
 
 ## 9. Risks
 
-1. **Independent redraw drivers.** The marquee runs at 30 fps (`TimelineView`),
-   the progress bar ticks every second, and the equaliser animates
-   `repeatForever`. Measured after the polling fix: **0.0% closed and idle, ~2%
-   closed and playing**. The marquee is now effectively gated — it only exists
-   inside `MusicPanel`, which only exists while expanded — so the remaining cost
-   is the equaliser, which is the live activity and therefore intentional.
-   See the accepted rough edge in §9.
+1. **Independent redraw drivers — measured, and one was expensive.** With CPU
+   time deltas rather than `ps %cpu` (a lifetime average, which had been
+   concealing this):
+
+   | State | Cost |
+   | --- | --- |
+   | Closed, paused, no chin | **0.1%** of a core |
+   | Closed, playing, chin visible | **9.0%** → **3.8%** after the fix |
+   | Expanded (any panel) | **1.7%** |
+
+   The chin's three bars used a `repeatForever` implicit animation, so a 12 pt
+   glyph redrew the whole island at display rate — in the state the app sits in
+   most. They are now computed from a `TimelineView` at ~8 fps. The marquee is
+   already gated (it lives only in `MusicPanel`, which exists only while
+   expanded). A static glyph would take this to zero if 3.8% ever matters.
 2. **Drag-and-drop into a `.mainMenu + 3` panel.** Works, but the window must
    not be click-through mid-drag, and drag types must be registered on an
    `NSView` behind the SwiftUI content. See §5 for the full mechanics.
@@ -1033,8 +1041,9 @@ any of them can be reversed.
    to land just past the spring's response (`0.36 s` / `0.24 s`) so the shrink
    cannot fire mid-flight. They are constants, not derived from the animation.
 4. **The equaliser animates while the island is closed and music is playing** —
-   that is the live activity, and it costs roughly 2% CPU for as long as it is on
-   screen. Pausing stops it. This is risk 1 in its remaining form.
+   the live activity. It cost 9% of a core until it was moved off the implicit
+   animation; it is 3.8% now. Dropping to a static glyph would make it zero, at the
+   cost of the "something is playing" cue. See risk 1.
 5. **The window was once sampled at `X = -59` for a frame during a display
    reconfiguration**, where it should be `536`. It self-corrected immediately and
    was never reproduced. The likely cause is `targetScreen()` returning a screen
@@ -1233,6 +1242,10 @@ pointer; it is checked in `scheduleCollapse()` alongside `isInteracting` (§1).
   animation. Do not try to see a transition that way — the window bounds are the
   thing to measure, not the pixels: sample `CGWindowListCopyWindowInfo` every 60 ms
   and check that the window is never smaller than the island (risk 7).
+- **`ps %cpu` is a lifetime average**, not an instant reading. It reports a high
+  number for a minute after launch and drifts down, so it hid a 9% idle cost for
+  several sessions. Measure with CPU-time deltas: `ps -o cputime=` twice, or
+  `sample <pid> 3` and look for a process parked in `mach_msg2_trap`.
 - `screencapture -l <windowid>` captures a window's whole buffer including
   transparent area, which makes it the fastest way to inspect a panel without
   depending on what is underneath it. **It can also return the previous frame** —
