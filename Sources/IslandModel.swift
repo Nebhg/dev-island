@@ -27,6 +27,35 @@ final class IslandModel: ObservableObject {
     /// needing `setopt INC_APPEND_HISTORY`. Rendered as a strip above content.
     @Published var panelNotice: String?
 
+    /// A short message under the notch saying what the click did, for ~1.2 s.
+    ///
+    /// A sentence, not a tick: "did that paste, or did it only copy?" is the whole
+    /// question, and a glyph cannot answer it. It sits *below* the island rather
+    /// than in the chin because the chin has ~32 pt either side of the camera
+    /// cutout — enough for artwork and bars, not for words.
+    @Published private(set) var pasteToast: PasteToast? {
+        didSet { onGeometryChange?() }
+    }
+
+    struct PasteToast: Equatable {
+        let text: String
+        /// Drives the glyph; the text carries the meaning.
+        let pasted: Bool
+    }
+
+    /// Height of that message, and the gap above it.
+    static let toastHeight: CGFloat = 26
+    static let toastGap: CGFloat = 8
+
+    /// Whether the acknowledgement is drawn at all. Off means no widening, not a
+    /// dimmed one.
+    @Published var pasteConfirmationEnabled: Bool {
+        didSet { UserDefaults.standard.set(pasteConfirmationEnabled, forKey: Self.confirmationKey) }
+    }
+
+    private static let confirmationKey = "pasteConfirmationEnabled"
+    private var toastWork: DispatchWorkItem?
+
     /// Auto-paste on every click. Off means copy-only, which is the same thing
     /// ⌥-click does — so the modifier keeps working either way.
     ///
@@ -91,6 +120,7 @@ final class IslandModel: ObservableObject {
         self.defaultPanel = initial
         self.activePanel = initial
         self.autoPasteEnabled = UserDefaults.standard.object(forKey: Self.autoPasteKey) as? Bool ?? true
+        self.pasteConfirmationEnabled = UserDefaults.standard.object(forKey: Self.confirmationKey) as? Bool ?? true
         self.terminal = TerminalService(rules: ignoreRules)
 
         player.$nowPlaying
@@ -146,6 +176,15 @@ final class IslandModel: ObservableObject {
         let playing = nowPlaying?.isPlaying == true
         let chin = playing ? (2 * max(0, notchSize.height - 12) + 20) : 0
         return CGSize(width: base + chin, height: notchSize.height)
+    }
+
+    /// What the window has to be. Normally the island; while a toast is up the
+    /// window grows downwards so there is somewhere to draw it — the shape stays the
+    /// island's size, and the extra band is transparent.
+    var windowSize: CGSize {
+        let island = islandSize
+        guard pasteToast != nil else { return island }
+        return CGSize(width: island.width, height: island.height + Self.toastGap + Self.toastHeight)
     }
 
     /// The island is always pinned to the top edge of the display.
@@ -204,7 +243,19 @@ final class IslandModel: ObservableObject {
 
     private func deliverPaste(autoPaste: Bool) {
         collapse()
-        // Never gated on a permission check: see `AccessibilityPaster`.
+
+        // Say what happened. `canPost` is the only signal for whether the keystroke
+        // will land, and when it is false the text is still on the clipboard — so
+        // claiming a paste would be a lie and "Copied" is the truthful message. The
+        // Accessibility notice in `panelNotice` covers the case where the grant is
+        // the problem.
+        let willPaste = autoPaste && AccessibilityPaster.canPost
+        showPasteToast(PasteToast(
+            text: willPaste ? "Auto-pasted" : "Copied to clipboard",
+            pasted: willPaste
+        ))
+
+        // Never gated on the check for the *attempt*: see `AccessibilityPaster`.
         guard autoPaste else { return }
         // Next runloop turn: the pasteboard write and the window teardown both have
         // to land before the keystroke, or the target app pastes the old contents.
@@ -213,6 +264,22 @@ final class IslandModel: ObservableObject {
             AccessibilityPaster.postPaste()
         }
     }
+
+    /// Shows the message for ~1.2 s. One timer, replaced rather than stacked, so
+    /// repeated clicks cannot leave it on screen.
+    private func showPasteToast(_ toast: PasteToast) {
+        guard pasteConfirmationEnabled else { return }
+        toastWork?.cancel()
+        pasteToast = toast
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.toastWork = nil
+            self.pasteToast = nil
+        }
+        toastWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+    }
+
 }
 
 final class PlayerService: ObservableObject {

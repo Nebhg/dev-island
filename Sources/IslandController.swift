@@ -160,6 +160,13 @@ final class IslandController {
             }
             .store(in: &cancellables)
 
+        // The confirmation chin breathes out and back, and it covers live menu bar
+        // while it is up, so the click-through policy has to follow it too.
+        model.$pasteToast
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.refreshMousePolicy() }
+            .store(in: &cancellables)
+
         // Switching panel changes the island's size, so the window has to be
         // resized in the same turn as the model changes. Otherwise the hot zone
         // and the frame disagree for a frame and the island collapses itself.
@@ -288,7 +295,7 @@ final class IslandController {
         // through the island — that is risk 7, and this is why it is structural
         // rather than a faster animation. A window that is larger than the shape
         // only ever has transparent margin around an already-drawn shape.
-        let target = model.islandSize
+        let target = model.windowSize
         let needed = CGSize(
             width: max(windowSize.width, target.width),
             height: max(windowSize.height, target.height)
@@ -385,7 +392,7 @@ final class IslandController {
     private func refreshMousePolicy() {
         if model.expanded {
             panel.ignoresMouseEvents = false
-        } else if model.nowPlaying?.isPlaying == true {
+        } else if model.pasteToast != nil || model.nowPlaying?.isPlaying == true {
             // The playing chin overlaps live menu bar, so it must let clicks
             // through while still acting as a drop target through the drag detector.
             panel.ignoresMouseEvents = true

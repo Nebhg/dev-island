@@ -65,6 +65,15 @@ struct IslandRootView: View {
                 .contentShape(shape)
                 .animation(.easeInOut(duration: 0.18), value: model.expanded)
 
+            // The acknowledgement sits under the island, not inside the shape: a
+            // sentence needs more width than the chin's two 32 pt wings beside the
+            // camera cutout. The window grows downwards to make room.
+            if let toast = model.pasteToast {
+                PasteToastView(toast: toast)
+                    .padding(.top, IslandModel.toastGap)
+                    .transition(.opacity)
+            }
+
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -254,6 +263,28 @@ struct GlassSurface: View {
                 .fill(.white.opacity(0.09))
                 .frame(height: 0.5)
         }
+    }
+}
+
+/// Whether the notch acknowledges a click at all.
+///
+/// A separate switch from autopaste because they answer different questions: "does
+/// a click paste" and "does it say so". Someone may want the paste without the
+/// animation, or vice versa.
+struct PasteConfirmationToggle: View {
+    let enabled: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            Image(systemName: enabled ? "checkmark.circle.fill" : "checkmark.circle")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(enabled ? 0.75 : 0.3))
+                .frame(width: 14, height: 14)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(enabled ? "The notch confirms each click — click to stop" : "The notch is silent after a click — click to confirm")
     }
 }
 
@@ -770,7 +801,11 @@ struct ClipboardPanel: View {
                 .foregroundStyle(.white.opacity(0.3))
             Spacer(minLength: 0)
             PasteToggle(enabled: model.autoPasteEnabled) { model.autoPasteEnabled.toggle() }
-                .padding(.trailing, 8)
+            PasteConfirmationToggle(enabled: model.pasteConfirmationEnabled) {
+                model.pasteConfirmationEnabled.toggle()
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, 8)
             HistoryWindowPicker(window: clipboard.window) { clipboard.window = $0 }
         }
         .padding(.leading, 8)
@@ -1380,6 +1415,39 @@ struct MarqueeText: View {
             }
         }
         .frame(width: width, alignment: .leading)
+    }
+}
+
+/// What a click just did, as a short message under the island.
+///
+/// It has to appear *after* the collapse — the panel is gone by the time the
+/// keystroke lands — so it cannot be a row highlight or anything inside the panel.
+/// The chin was the first home for it, but the chin is only ~32 pt either side of
+/// the camera cutout: room for a glyph, not for "Copied to clipboard".
+struct PasteToastView: View {
+    let toast: IslandModel.PasteToast
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: toast.pasted ? "checkmark.circle.fill" : "doc.on.clipboard")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+            Text(toast.text)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: IslandModel.toastHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(.black.opacity(0.92))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
+                )
+        )
+        .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
     }
 }
 
