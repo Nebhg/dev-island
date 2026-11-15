@@ -1,11 +1,14 @@
 # Dev Island — multi-panel plan
 
-Status: **complete.** Phases 0a and 1–10 are implemented and verified by use;
-0b is the only unrun check (whether *reading* the pasteboard makes macOS prompt —
-no prompt has ever appeared, so it is close to answered by observation). §1 states
-facts verified against the source; §13 records the code review; §11 records signing
-and installation. The three accepted rough edges in §9 are deliberate, not
-outstanding.
+Status: **complete, plus a second pass.** Phases 0a and 1–10 are implemented and
+verified by use; 0b is the only unrun check (whether *reading* the pasteboard makes
+macOS prompt — no prompt has ever appeared, so it is close to answered by
+observation). The second pass, Phases 11–17, came from running the app on a second
+machine and is indexed in §15; one part of it is **not yet verified** — drops from
+the Dock's Downloads stack (§5, risk 11) — and §10 now has three open decisions.
+§1 states facts verified against the source; §13 records the code review; §11
+records signing and installation. The three accepted rough edges in §9 are
+deliberate, not outstanding.
 
 | Phase | State |
 | --- | --- |
@@ -24,6 +27,13 @@ outstanding.
 | 8 — paste confirmation | **done, verified** |
 | 9 — one music-panel size, aspect-fitted tile | done, verified live |
 | 10 — view dedup (review 1B) | **done, pixel-verified** |
+| 11 — reopen on the last panel | done |
+| 12 — true-black surface, square top corners | done, confirmed by use |
+| 13 — one padding and corner system, notch-following heights, symmetric chin | **done, pixel-measured** on 32 and 37.5 pt notches, confirmed by use |
+| 14 — switcher icons at menu-bar size | done, measured against a screenshot |
+| 15 — 100 pt drag reach, whole-island drop target | done for Finder; **Dock stack unverified** |
+| 16 — `⇧⌘V` clipboard picker | built; key registration verified, not yet confirmed in use |
+| 17 — Settings panel, optional clean layout | built, render-verified |
 
 Goal: turn a single-purpose music notch into a panel host with a clipboard
 history panel, a terminal-history panel, and a file shelf, plus a visual upgrade to
@@ -44,10 +54,10 @@ does not.
 | Fact | Source | Consequence |
 | --- | --- | --- |
 | `islandSize` derives from `expanded` and `activePanel`, and from `shelf.items` for the shelf **(Phase 1, reworked Phase 5.5)** | `Sources/IslandModel.swift` (`islandSize`) | Size changes no longer rely on snapping the frame in the same turn. The window is grown to `max(old, new)` **before** the shape animates and settles afterwards, driven synchronously from the model's setters, so `islandRect` / `inHotZone` are never wrong for a frame — see §2. Two consequences: `expanded` / `activePanel` must go through their `didSet` rather than a Combine sink, and anything else that changes `islandSize` must re-publish — which is why `IslandModel` subscribes to `shelf.$items`. |
-| `expand()` selects `defaultPanel` before flipping `expanded` **(found in Phase 4)** | `Sources/IslandModel.swift` (`expand()`) | Anything wanting a specific panel on expand must select it **after** calling `expand()`; selecting first is silently overwritten. This cost a drop target: the shelf was selected during a drag, `expand()` replaced it with the default panel, and the drop landed on a panel with no drop handler. |
+| `expand()` selects `panelOnOpen` before flipping `expanded` **(found in Phase 4; `defaultPanel` until Phase 11)** | `Sources/IslandModel.swift` (`expand()`, `panelOnOpen`) | Anything wanting a specific panel on expand must select it **after** calling `expand()`; selecting first is silently overwritten. This cost a drop target: the shelf was selected during a drag, `expand()` replaced it with the default panel, and the drop landed on a panel with no drop handler. `panelOnOpen` is the current panel while `reopensLastPanel` is on (the default) and `defaultPanel` otherwise, so the overwrite is usually a no-op now — but the rule still holds whenever a fixed default is set. |
 | No SPM, no dependencies — plain `swiftc` | `build.sh` | No GRDB/Realm. Persistence must be `Codable` JSON, capped and debounced. |
 | `~/.zsh_history`: ~1,300 lines and growing, **no timestamps**, `\` continuations, non-UTF-8 bytes | measured | Recency must come from file position, not time. The parser must join continuations and decode lossily. `INC_APPEND_HISTORY` is now set in `~/.zshrc`, so the file is written per command rather than on shell exit. `EXTENDED_HISTORY` is still off. |
-| `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift` (`refreshMousePolicy`) | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay interactive as an `NSDraggingDestination`, while the `249 pt` playing chin stays click-through because it covers live menu bar. |
+| `panel.ignoresMouseEvents` centralised in `refreshMousePolicy()` **(Phase 1)** | `Sources/IslandController.swift` (`refreshMousePolicy`) | Policy is `expanded ? false : isPlaying`. During a drag session `mouseMoved` does not fire, so a file dragged at a click-through window never lands: the closed idle window (`notch + 4`, physical cutout only) must stay interactive as an `NSDraggingDestination`, while the playing chin stays click-through because it covers live menu bar (`261 pt` on a 185 × 32 notch — `notch + 2·height + 12`, §2; it was `249 pt` before Phase 13). |
 | Hover monitors cover `.mouseMoved`, `.leftMouseDown`, `.leftMouseDragged`, `.leftMouseUp` **(Phase 4)** | `Sources/IslandController.swift` (`installMonitors`, `isCarryingContent`) | A held mouse button posts `.leftMouseDragged`, not `.mouseMoved`, so drag-in needs its own event type or the island never expands. The gate is the drag pasteboard's **types**, not its `changeCount`: measured, the count does not move when a drag starts. The pasteboard is cleared on `.mouseMoved` because AppKit leaves the previous drag's types behind. See §5. |
 | Polls only run while expanded **(Phase 1)** | `Sources/IslandController.swift` (`$expanded` sink), `Sources/IslandModel.swift` (`startPolling` / `stopPolling`) | Both the Spotlight watch and `PlayerService.startPolling()` / `stopPolling()` are driven off `$expanded`. Verified: zero `osascript` spawns while closed. This is the precedent the `PanelProvider` lifecycle follows. |
 | Panel level `.mainMenu + 3`, SkyLight space attach | `Sources/FullscreenSupport.swift` | New panels inherit this; no extra work. |
@@ -60,6 +70,11 @@ Environment: Apple Silicon, macOS 26 (27.3 beta), screen 1512 × 982 @2x, notch
 185 × 32 pt. Shell is zsh. Browsers installed: Chrome, Edge, Safari. Media app:
 Spotify only.
 
+Second machine (the second pass, §15): M2 MacBook Air, macOS 27.2, screen
+1710 × 1112 @2x, **notch 208 × 37.5 pt**, Command Line Tools only — no Xcode. The
+taller notch is what exposed every fixed height in §2, and the missing Xcode is
+risk 12.
+
 ---
 
 ## 2. Architecture
@@ -68,8 +83,9 @@ Spotify only.
 
 ```
 IslandModel
-├── activePanel: PanelID        // .music .clipboard .terminal .shelf
-├── defaultPanel: PanelID       // persisted, opened on first hover
+├── activePanel: PanelID        // .clipboard .terminal .shelf .music .settings
+├── reopensLastPanel: Bool      // persisted, default true: hover reopens where you left
+├── defaultPanel: PanelID       // persisted; opened on hover when reopensLastPanel is off
 └── registry: [PanelID: PanelProvider]
 
 protocol PanelProvider {
@@ -142,23 +158,33 @@ the pointer is inside it, and `handleMouse` treats that rect as inside until the
 pointer actually leaves it. It is cleared on expand and when the pointer exits
 the captured rect.
 
-The `32 pt` physical notch, the panel bar in that band, and padding consume
-`~40 pt` of vertical chrome. Sizes differ by panel:
+The physical notch (32 pt on the first machine, 37.5 on the second), the panel bar
+in that band, and the panel padding sit above every panel's content. Sizes differ
+by panel:
 
 | Panel | Size (pt) | Why |
 | --- | --- | --- |
 | Clipboard | 520 × 320 | wide rows: text, source and age on one line; FREQUENT chips stop wrapping |
 | Terminal | 520 × 320 | long commands stop truncating |
-| Shelf | 440 × 102–260 | **height follows the file count**; 102 with one file, capped at 260 before it scrolls |
-| Music | 520 × 190 | one size for every source; the artwork tile follows the image's aspect so nothing is cropped (§6) |
+| Shelf | 440 × 106–260 | **height follows the file count**; 106 with one file on a 32 pt notch, capped at 260 before it scrolls |
+| Music | 520 × (notch + 156) | 188 on a 32 pt notch, 193.5 on 37.5: the artwork plus the panel padding above and below; the tile follows the image's aspect so nothing is cropped (§6) |
+| Settings | 520 × (notch + 233) | six 34 pt rows (§15) |
 
 Clipboard and terminal are deliberately identical, so switching between the two
 most-used panels moves nothing at all.
 
-The shelf is the one panel that is not a fixed size — see §5. Its height is
-`notchHeight + 38 + 31·items + 1`, capped at 260. A fixed 260 reserved room for six
-rows even when one file was dropped, which left a mostly empty card hanging under
-the notch.
+**Fixed heights were the second pass's main layout bug.** The music panel was a
+constant 190, tuned on a 32 pt notch; on a 37.5 pt notch the band took 5.5 pt more
+of it and the padding under the artwork fell to 9 pt, against 13 at the sides.
+Every height that holds content under the band is now `notchHeight + …`, computed
+in `IslandModel.islandSize`. The list panels stay a fixed 320 because their lists
+scroll, so a taller band only costs a row of visible history.
+
+The shelf's height follows its contents — see §5. It is
+`notchHeight + 44 + 31·items − 1` (the 12 pt padding above and below, the 14 pt
+header and the 6 pt gap under it, then 30 pt rows with a 1 pt gap between them),
+capped at 260. A fixed 260 reserved room for six rows even when one file was
+dropped, which left a mostly empty card hanging under the notch.
 
 Adding or removing a file resizes the window the same way a panel switch does, and
 this is the case that shows why the trigger has to live in the model. **The
@@ -178,14 +204,22 @@ watching those), and the shelf cannot, because it is a different object.
 
 The switcher sits **in the menu-bar band either side of the physical cutout**,
 which is otherwise dead screen space the island reserves and never uses. Two
-icons left of the notch, two right, in this order:
+icons left of the notch, three right, in this order:
 
 ```
-  clipboard  terminal  |  (notch)  |  shelf  music
+  clipboard  terminal  |  (notch)  |  shelf  music  settings
 ```
 
 Active at full white, inactive at 0.3. This replaced a bottom nav row, which cost
 ~22 pt of content height on every panel and put the switcher where the eye is not.
+
+**Sized like the menu bar's own items: SF Symbols at 14 pt medium** (12 pt semibold
+until Phase 14). Measured rather than matched by eye: in a screenshot of the menu
+bar, the system's now-playing item is `play.circle` at exactly 14 × 14 pt with a
+1.5 pt ring, which is what SF Symbols draws at 14 pt medium — regular draws a 1 pt
+ring. The same rendering method reproduced the old icons' sizes from the screenshot
+to the half point (12.5 × 15, 14 × 11, 14 × 10.5, 7.5 × 12), so it can be trusted.
+Centre-to-centre spacing was already 36 pt, the menu bar's own.
 
 The icons are **anchored to the cutout**, not centred in the side band. Panels
 differ in width, so centring would slide all four icons sideways on every switch.
@@ -193,11 +227,14 @@ The band is measured from `activePanel.preferredSize`, not from the window, so t
 icons stay put even while the window is still the larger of the two sizes.
 
 **Keyboard shortcuts**, because the pointer is often nowhere near the notch:
-`⌥⌘1`–`⌥⌘4` jump straight to a panel in display order, `⌥⌘←` / `⌥⌘→` cycle.
+`⌥⌘1`–`⌥⌘5` jump straight to a panel in display order, `⌥⌘←` / `⌥⌘→` cycle.
 Carbon `RegisterEventHotKey`, not an `NSEvent` monitor — a global key monitor needs
 Accessibility and the island never becomes the active app. Registered only while
-the island is expanded (`Sources/HotKeys.swift`), so they cannot shadow anything
-system-wide when it is closed.
+the island is expanded, so they cannot shadow anything system-wide when it is
+closed. `Sources/HotKeys.swift` now holds three groups, each registered only while
+it can mean something: these, while expanded; the clipboard picker's shortcut
+(`⇧⌘V` by default), always; and the picker's unmodified keys, only while it is
+open (§3). One Carbon handler serves all three for the process lifetime.
 
 Deliberately **no scroll-to-switch**: a clipboard list needs wheel scrolling,
 and a global scroll handler fights it.
@@ -220,21 +257,41 @@ behind a filter, the latter reads as broken.
 `ISLAND_HISTORY` points the provider at a fixture file, which is how the windows
 are tested without touching real shell history.
 
+**In the clean layout (§15) the header and the chips are hidden** and the windows
+are set from the Settings panel instead; the filtered empty state then reads
+"Choose All in Settings to see older commands", since there is no All to pick.
+
 ### Default panel
 
-**Clipboard.** It is the panel that is useful the instant the island opens — you
-open it to get something back, not to look at something. Submenu on the existing
-status item (`Sources/App.swift`), persisted in `UserDefaults`. No settings window.
+**Last used, by default (Phase 11).** Hover reopens on whichever panel was showing
+when the island closed — so after dropping a file on the shelf, the next hover
+shows the shelf, where it used to snap back to Clipboard. That was the first thing
+reported on the second machine. `activePanel` is persisted (`lastPanel`) so it also
+survives a relaunch; previews do not write it (`PreviewMode.active`, which until
+then was set but read by nothing).
 
-A stored `music` is treated as the old default rather than a choice and migrated
-to clipboard, so existing installs get the new behaviour instead of being stuck
-on a panel nobody picked.
+A fixed default is still available — **Default Panel** on the status item, or
+*Opens on* in Settings — and **Clipboard** remains the fallback when nothing is
+stored: it is the panel that is useful the instant the island opens. A stored
+`music` default is still migrated to clipboard, as before.
+
+Two things never become the panel hover reopens on, because both are detours rather
+than choices: **Settings** (closing on it returns to the last content panel) and
+the **`⇧⌘V` picker** (it puts back the panel it replaced, unless a different panel
+was picked while it was open).
 
 ### Music while another panel is open
 
-**The closed island shows the track in a "chin": the cutout widens by
-`2 * (height - 12) + 20` while music plays**, with 20 pt artwork on one side and a
-three-bar waveform on the other.
+**The closed island shows the track in a "chin": a wing either side of the cutout,
+each a square as tall as the band**, so while music plays the closed island is
+`notch + 2·height + 12` wide — 261 pt on a 185 × 32 notch, 295 on 208 × 37.5. The
+20 pt artwork sits centred in one wing and the three-bar waveform in a same-sized
+slot in the other, so both get the same padding on every side, and the artwork's
+radius is concentric with the island's (`14 − padding`).
+
+It was `2 * (height - 12) + 20` with the artwork flush against the island's edge —
+0 pt of black on that side, against 1.5 pt beside the bars — which read as the
+island covering the waveform but not the artwork (Phase 13).
 
 macOS also draws its own now-playing live activity further along the menu bar, so
 both are visible. That was first treated as duplication and the chin was deleted —
@@ -320,7 +377,8 @@ exact bug shipped once and made repeated copies stop appearing.
 
 Frecency: `uses × 0.5 ^ (daysSinceLastUse / 14)` — top 3 rendered as chips, with a
 `FREQUENT` label above and a kind icon per chip. Ties break by recency, otherwise
-equal-scoring chips reorder arbitrarily between renders.
+equal-scoring chips reorder arbitrarily between renders. Hidden, with the header,
+in the clean layout (§15).
 
 The terminal panel does **not** share this ranking: the history file carries no
 timestamps, so a decay curve would be invented rather than measured. It ranks by
@@ -375,6 +433,43 @@ the shape. Transparent band, click-through while it is up.
 Always shown. A toggle existed for it in the header for one round and was removed:
 an acknowledgement you have to switch on is one you have to remember exists.
 
+### Keyboard picker (`⇧⌘V`) — built, not yet confirmed in use
+
+Getting something back used to take the pointer: hover the notch, switch to the
+clipboard if it was not the last panel, click. The picker is the keyboard path,
+modelled on Windows' ⊞V:
+
+| Key | Does |
+| --- | --- |
+| `⇧⌘V` | Opens the island on the clipboard with the first row selected; pressed again, closes it |
+| `↑` / `↓` | Move the selection; the list scrolls only as far as it must |
+| `↩`, keypad Enter | Paste the selection — the click path, so Autopaste applies |
+| `⌥↩` | Copy only, like ⌥-click |
+| `⎋`, a click elsewhere, switching apps | Close |
+
+- **Focus never moves**, for the same reason clicks work (*Focus*, below): Carbon
+  hot keys are delivered without activating the app, so the paste lands in the app
+  that was in front.
+- **The arrows and Return are global while registered** — unmodified keys, taken
+  from every app. So they are registered only while `pickerActive` is true, from a
+  synchronous sink rather than a next-turn one, and every exit ends them: a paste,
+  `⎋`, any collapse, an outside click, and `didActivateApplicationNotification`
+  (⌘Tab). Risk 13 is what happens if one is ever missed.
+- **The pointer being elsewhere is the normal case**, so `scheduleCollapse` ignores
+  pointer exit while the picker is up.
+- The selection is an index into `clipboard.visible`, drawn a step brighter than
+  hover (`0.11` against `0.06`) so the two can be told apart when the pointer rests
+  on another row. The keys act only while the clipboard is the active panel; `⎋`
+  works on any.
+- **The shortcut is a preset, not a recorder**: `⇧⌘V`, `⌥⌘V`, `⌃⌘V` or off, on the
+  status item and in Settings. Each takes over one shortcut elsewhere, which a menu
+  cannot hide: `⇧⌘V` (chosen) replaces *paste as plain text* in Chrome, Slack and
+  Google Docs; `⌥⌘V` replaces Finder's *Move item here*; `⌃⌘V` is free but awkward
+  to reach. A failed registration — another app already holding the combination —
+  shows as "in use by another app" rather than a key that silently does nothing.
+  All nine combinations were confirmed free on the second machine with a
+  register-and-release probe.
+
 ### Timing
 
 There is **no collapse-completion callback** — `collapse()` sets `expanded =
@@ -425,7 +520,10 @@ untested fallback would have been dead code pretending to be insurance.
   both history headers, persisted, on by default. Named for the setting rather than
   the outcome: "Paste / Copy" read as an action button instead of a switch. Off
   means copy-only, the same result as ⌥-click, which keeps working either way, and
-  no notice is shown while it is off.
+  no notice is shown while it is off. It is also a row in Settings, its only home
+  in the clean layout; there the missing-grant warning is the row's own hint, which
+  opens Privacy & Security when clicked, because Settings has no notice strip — its
+  height is its rows.
 
 ---
 
@@ -535,9 +633,9 @@ never touches the real file.
 | Piece | State |
 | --- | --- |
 | `ShelfStore` | Path + plain bookmark, dedupe by resolved path, cap 30, immediate `0600` write, dead references pruned on load |
-| `ShelfPanel` | File icon, name, parent folder, size; click reveals in Finder; right-click Open / Reveal / Copy Path / Remove. **Panel height follows the item count** — 102 pt with one file, +31 per file, capped at 260 where the list starts scrolling |
-| Drop | `public.file-url` only; anything else is rejected so the drag animates back rather than being silently swallowed |
-| Drag-in | Opens the shelf, not the default panel; a cancelled drag restores the previous panel |
+| `ShelfPanel` | File icon, name, parent folder, size; click reveals in Finder; right-click Open / Reveal / Copy Path / Remove. **Panel height follows the item count** — 106 pt with one file on a 32 pt notch, +31 per file, capped at 260 where the list starts scrolling |
+| Drop | `FileDropView`, the window's content view, so the **whole island** takes the drop — notch band included. Files only (`public.file-url`, or the older `NSFilenamesPboardType`); anything else is rejected so the drag animates back rather than being silently swallowed. Takes whichever operation the source offers (*Dock stacks*, below) |
+| Drag-in | Opens the shelf, not the default panel, once a file is within 100 pt (`dragReach`); a cancelled drag restores the previous panel; a release over the open shelf that no drop answered is caught by a safety net |
 | Drag-out | `NSView` + `NSDraggingSource`, 3 pt threshold, copy-only, icon as the drag preview — **verified by use** |
 
 **All exercised by hand, 15 Nov.** The row context menu (Open / Reveal / Copy
@@ -548,9 +646,11 @@ likely to bite, because they share one `NSView` that owns the mouse.
 
 ### Design
 
-- Drop target covers the **closed island** too, not just the open panel —
-  flicking a file at the notch is the point. A drag entering the hot zone
-  expands straight to the Shelf panel.
+- **A file opens the shelf from 100 pt out**, and the whole island takes the drop
+  — flicking a file at the notch is the point. `IslandController.dragZone` is the
+  shelf's footprint plus `dragReach` on each side and below, hanging from the top
+  edge. Until Phase 15 the pointer had to be inside the cutout to open it and then
+  over the list below the band to drop: up, then back down again.
 - **References, not copies.** `ShelfItem { path, bookmark, added }`, deduped by
   resolved path, capped at 30: this is a staging area, not a library.
 - **Plain bookmarks, not security-scoped.** boring.notch needs
@@ -589,14 +689,14 @@ which is too narrow to design around.
 
 ### Drag-in mechanics — and the bug this exposes
 
-`NSItemProvider`/`NSDraggingDestination` must be hosted in an `NSView` behind the
-SwiftUI content, and the window must not be click-through mid-drag. Keep the
-closed idle window (`notch + 4` wide — physical cutout only, nothing clickable
-behind it) permanently interactive (`ignoresMouseEvents = false`) as an
-`NSDraggingDestination`. When music is playing while closed, the `249 pt` chin
-overlaps live menu-bar space and stays click-through (`ignoresMouseEvents = true`);
-drag-in still works because the drag detector expands the island before the pointer
-reaches it.
+`NSDraggingDestination` lives in an `NSView` behind the SwiftUI content —
+`FileDropView`, the window's content view, with the hosting view inside it — and
+the window must not be click-through mid-drag. Keep the closed idle window
+(`notch + 4` wide — physical cutout only, nothing clickable behind it) permanently
+interactive (`ignoresMouseEvents = false`). When music is playing while closed, the
+chin overlaps live menu-bar space and stays click-through
+(`ignoresMouseEvents = true`); drag-in still works because the drag detector
+expands the island before the pointer reaches it.
 
 **Selecting the shelf is not enough — `expand()` overwrites it.** `IslandModel`
 sets `activePanel = defaultPanel` inside `expand()` before flipping `expanded`.
@@ -605,7 +705,7 @@ to the default panel, that panel has no drop handler, and the drop landed on
 nothing. Symptom was "the notch opens but the file panel doesn't and the file never
 appears" — two complaints with one cause. The shelf is now selected *after*
 `expand()`, and the panel to restore on cancel is computed the same way
-(`expanded ? activePanel : defaultPanel`) — what `expand()` is about to show, not
+(`expanded ? activePanel : panelOnOpen`) — what `expand()` is about to show, not
 what was left over from last time.
 
 **The existing hover monitor cannot see a drag.** `IslandController` monitors
@@ -690,6 +790,58 @@ terminal it does not inherit the app's TCC grant and receives nothing, which loo
 identical to Finder swallowing the events. The probe inside the signed app is the
 only reliable way to ask.
 
+### Dock stacks — second pass, **not yet verified**
+
+Dragging a file out of the Dock's Downloads stack did nothing; from Finder it
+worked. A listen-only probe outside the app — a global monitor, and a 20 Hz poll of
+the drag pasteboard and of the window under the pointer — showed the two drags are
+the same from outside:
+
+| | Finder | Dock stack |
+| --- | --- | --- |
+| Global `.leftMouseDragged` delivered | yes | **yes** — 31 to 130 per drag |
+| Drag pasteboard | `public.file-url`, … | `public.file-url`, `NSFilenamesPboardType`, `com.apple.finder.node`, `Apple URL pasteboard type`, `CorePasteboardFlavorType 0x6675726C`, two `dyn.` types |
+
+So detection was never the problem — although most of the test drags were released
+42–88 pt below the top edge, short of the old hot zone, which the 100 pt reach now
+covers. (One press on the Dock produced 349 dragged events and no pasteboard write
+at all: almost certainly the stack's own tile being dragged, not a file.)
+
+That leaves the drop. It has three layers now, because which one the Dock trips is
+not yet known:
+
+1. **The operation.** SwiftUI's `onDrop` always proposes a copy, and a source that
+   does not offer one gets the no-entry cursor. `FileDropView` reads
+   `draggingSourceOperationMask` and takes copy, link, generic or move — whichever
+   is offered first in that order — and nothing is copied or moved whichever it is,
+   because the shelf only records a reference.
+2. **When the data is read.** The first AppKit version (Phase 15, first round) read
+   the file URLs in `draggingEntered` to decide whether to accept. Finder supplies
+   them at once; a source that supplies them only once the drag ends answers with
+   nothing, and the drop is refused before it can happen. It still failed from the
+   Dock, so the decision now uses the pasteboard's **types** alone, and the URLs are
+   read in `performDragOperation`, falling back to `NSFilenamesPboardType`.
+3. **A safety net that needs no drop at all.** The hover monitor sees every drag,
+   and the drag pasteboard still holds the files after the button comes up. If a
+   file is released over the open shelf and no drop has arrived 250 ms later,
+   `restorePanelIfDragWasCancelled` reads the files from the drag pasteboard
+   itself. `awaitingReleasedFiles` holds the stale-pasteboard clear (*The drag
+   detector*, above) off until then, and a press that began on the island — a shelf
+   row being dragged out — is excluded. The cost, if this is the path that fires,
+   is cosmetic: the source animates the drag back while the file lands anyway.
+
+**Why the drop view is not hidden by SwiftUI.** Measured: an `NSHostingView`
+registers no drag types of its own; `onDrop` adds a hidden
+`_PlatformDraggingDestinationView` registered for `public.data` / `public.item`
+over its region. With the shelf's `onDrop` removed, nothing inside the host claims
+a drag, so drags fall through to `FileDropView` behind it.
+
+**To verify:** run with `ISLAND_DRAG_PROBE=1 … 2> drag.log` and drag from the
+Downloads stack. The log names the path that took the file — `drop target entered
+mask=… chosen=…`, `drop performed files=… readTook=…`, or `no drop arrived; safety
+net read N file(s)` — and an unexpected mask would show there too. Whichever layers
+turn out to be unneeded can then go (§10).
+
 ### Drag-out mechanics — built and verified
 
 Confirmed working by use: dragging a row out delivers the file to the destination,
@@ -765,7 +917,7 @@ keeps the app buildable from a clone with no blob, while staying MIT.
 
 ---
 
-## 6. Music panel — black glass, not colour — done
+## 6. Music panel — black, not colour — done
 
 A blurred colour backdrop was built first and then removed. It looked good on its
 own but broke the island: colour next to the black cutout makes the notch's edge
@@ -773,33 +925,42 @@ visible, and it made the music panel the only panel that was not black. The
 replacement is one shared surface for every panel:
 
 - **The notch band stays pure black**, so the cutout is invisible against it.
-- **Below it, a glass pane**: a faint white gradient (5.5% → 1.2%) with a 0.5 pt
-  hairline along its top edge. Enough to read as a surface rather than a flat
-  rectangle, not enough to compete with content.
+- **Below it, the same black**, with a 0.5 pt hairline under the band
+  (`PanelSurface`). Until Phase 12 this was a glass pane — a faint white gradient
+  (5.5% → 1.2%) — meant to read as a surface rather than a flat rectangle. On the
+  second machine it read as a grey island rather than a black one, and it was
+  removed.
 - Deliberately **not** `.ultraThinMaterial`: a material samples the desktop behind
   the window, which would make the island's edge visible against the bezel — the
   exact thing the black band exists to prevent.
 
 | Element | Was | Now |
 | --- | --- | --- |
-| Artwork | 60 pt | 132 pt, continuous 20 pt corners, soft shadow |
+| Artwork | 60 pt | 132 pt, continuous **12 pt** corners — concentric with the island's 24 pt corner at 12 pt padding (20 until Phase 13) — soft shadow |
 | Title | 15 semibold | 19 semibold |
 | Artist | 12 @ 0.55 | 14 @ 0.5 |
 | Scrub bar | full-width row below the content | 3 pt, in the right column under the artist, times beneath it |
 | Times | inline | 10 pt monospaced digit, elapsed / remaining |
-| Transport | grey circles | `pause.fill` in a filled 28 pt **white** circle with a dark glyph; plain 13 pt glyphs either side, 16 pt apart, centred under the text column |
+| Transport | grey circles | `pause.fill` in a filled **36 pt white** circle with a 15 pt dark glyph; 17 pt glyphs either side in 30 pt frames, 20 pt apart, centred under the text column (28 / 12 / 13 pt, 16 apart, until Phase 13) |
 
-The player block is centred vertically and its right column is pinned to the
-artwork's height (`132 pt`), so the title sits beside the artwork instead of
-stretching to the panel's full height and leaving the artwork floating. The height
-is `190`: 132 pt of artwork plus scrub, times and a 28 pt transport row needs ~150 pt
-of content, and the original 310 was mostly empty. (It was `440 × 190` until the
-music panel became one width for every source — see below.)
+The player block's right column is pinned to the artwork's height (`132 pt`), so
+the title sits beside the artwork instead of stretching to the panel's full height
+and leaving the artwork floating. The height is **`notch + 12 + 132 + 12`** — the
+artwork with the panel padding above and below — and the padding measures 12 pt on
+all four sides of the artwork on both notches. It was a constant `190`, which left
+12 pt under the artwork on a 32 pt notch but 9 on a 37.5 pt one, against 13 at the
+sides; the original 310 was mostly empty.
+
+In the right column the transport ends on the artwork's bottom edge and sits
+**midway between the time labels and the island's edge**: 12 pt above and 12 below,
+measured. That takes a 9 pt gap in code (`MusicPanel.transportGap`), because the
+10 pt time labels carry 3 pt of empty line under their digits. Before, the row was
+pinned to the bottom with 18 pt above it and 12 below.
 
 ### One size, aspect-fitted tile
 
-The panel is **520 × 190 for everything** — the same width the list panels use —
-and only the artwork tile changes shape:
+The panel is **one size for everything** — 520 wide, the width the list panels
+use, and one height per machine — and only the artwork tile changes shape:
 
 | Artwork | Tile |
 | --- | --- |
@@ -943,6 +1104,13 @@ the fastest way to inspect what a player is publishing:
 | 8 | ~~Paste confirmation: a toast under the island saying what the click did~~ **done, verified by use** | — |
 | 9 | ~~One music-panel size; the tile follows the artwork's aspect so a thumbnail is not cropped~~ **done, verified with a live session** | — |
 | 10 | ~~View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader`~~ **done, pixel-verified** (§13) | — |
+| 11 | ~~Reopen on the last panel; Default Panel gains *Last Used*~~ **done** | — |
+| 12 | ~~True-black surface; the flared top corners removed~~ **done, confirmed by use** | — |
+| 13 | ~~`IslandMetrics`: one 12 pt padding, concentric corners, notch-following heights, symmetric chin, larger transport~~ **done, pixel-measured, confirmed by use** | — |
+| 14 | ~~Switcher icons at menu-bar size (14 pt medium)~~ **done, measured** | — |
+| 15 | 100 pt drag reach; `FileDropView` over the whole island; the Dock-stack layers and safety net | **Finder works; Dock stack unverified** (§5) |
+| 16 | ~~`⇧⌘V` clipboard picker; shortcut presets~~ **built** | confirm in use |
+| 17 | ~~Settings panel; optional clean layout~~ **built, render-verified** | confirm in use |
 
 Phases 1–5.6 are complete. The panel shell did turn each feature into a provider
 plus a view: the clipboard and terminal panels each landed without touching the
@@ -967,9 +1135,10 @@ the panel shows stale commands and raises a notice strip) and
    progress bar (1 Hz), and the history ages (1/min). Expanded costs 0.9%, closed
    and idle 0.1%.
 
-2. **Drag-and-drop into a `.mainMenu + 3` panel.** Works, but the window must
-   not be click-through mid-drag, and drag types must be registered on an
-   `NSView` behind the SwiftUI content. See §5 for the full mechanics.
+2. **Drag-and-drop into a `.mainMenu + 3` panel.** Works from Finder, but the
+   window must not be click-through mid-drag, and drag types must be registered on
+   an `NSView` behind the SwiftUI content — now `FileDropView`. See §5 for the full
+   mechanics; the Dock is risk 11.
 3. **Provider lifecycle vs Spotlight handoff.** Both react to `expanded`.
    Suppression must stay authoritative over panel start/stop, or the island can
    start providers while Spotlight owns the screen.
@@ -1000,7 +1169,7 @@ the panel shows stale commands and raises a notice strip) and
    Verified by sampling the window bounds every 60 ms through a clipboard→music
    switch: the window held `520 × 320` for the whole animation, then settled to the
    music panel's size (`440 × 190` at the time, since music was narrower then; it is
-   `520 × 190` now, so that particular switch no longer resizes at all). The same for
+   `520 × (notch + 156)` now, so that switch only changes height). The same for
    expand (189 × 32 → 520 × 320) and collapse.
    The earlier attempts all tried to make a per-frame window resize keep up; this
    removes the per-frame resize instead.
@@ -1036,16 +1205,32 @@ the panel shows stale commands and raises a notice strip) and
     reliable way to ask.
     The real trap was in the gate, not the monitor: see §5 for why `changeCount` is
     not a drag-start signal.
+11. **Drops from the Dock's Downloads stack (open).** Detection is identical to
+    Finder's (§5, *Dock stacks*); the drop path now has three layers and a probe
+    that names whichever one took the file. Not yet run against the build that has
+    all three.
+12. **A Command Line Tools-only build on macOS 27 fails (open).** The 27.2 SDK
+    declares SwiftUI's `@State` as a macro, and the `SwiftUIMacros` plugin ships
+    with Xcode, not the CLT: `external macro implementation type
+    'SwiftUIMacros.StateMacro' could not be found`. The CLT still carry the 26.x
+    SDKs, and `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
+    ./build.sh` builds cleanly with no source change. `build.sh` does not do this by
+    itself yet — §10.
+13. **The picker's keys are global while it is open.** Unmodified `↑ ↓ ↩ ⎋` are
+    taken from every app for as long as they are registered. Mitigated by
+    construction (§3): registered from the picker state synchronously and removed
+    by every exit, an app switch included. If an exit is ever missed, the symptom is
+    Return not working anywhere until the island closes.
 
 ### Accepted rough edges
 
 Deliberate, not overlooked. Each is a cost that was judged smaller than its fix;
 any of them can be reversed.
 
-1. **The empty shelf is taller than a one-file shelf.** 128 pt vs 102 pt, because
-   the empty state is two lines of text under an icon and one row is a single row.
-   Dropping your first file therefore *shrinks* the card by 26 pt. It is the
-   correct height in both cases; it just reads as a wobble.
+1. **The empty shelf is taller than a one-file shelf.** 134 pt vs 106 pt on a 32 pt
+   notch, because the empty state is two lines of text under an icon and one row is
+   a single row. Dropping your first file therefore *shrinks* the card by 28 pt. It
+   is the correct height in both cases; it just reads as a wobble.
 2. **The settle delays are hand-tuned.** `0.6 s` expand, `0.45 s` collapse, chosen
    to land just past the spring's response (`0.36 s` / `0.24 s`) so the shrink
    cannot fire mid-flight. They are constants, not derived from the animation.
@@ -1060,12 +1245,12 @@ any of them can be reversed.
 
 ### Decided
 
-- **Panel sizes:** `520 × 190` (Music), `520 × 320` (Clipboard & Terminal), `440 × content-height` (Shelf, 102–260).
+- **Panel sizes:** `520 × (notch + 156)` (Music), `520 × 320` (Clipboard & Terminal), `440 × content-height` (Shelf, 106–260 on a 32 pt notch), `520 × (notch + 233)` (Settings). Any height that holds content under the band follows the notch.
 - **Window sizing:** The window is resized **only at the endpoints** of a transition — up to `max(old, new)` before the shape moves, back to the target after it settles — and never in between. The window is therefore never smaller than the shape, which is what removes the see-through (§2, risk 7). Springs stay critically damped because an overshoot would push the shape past the window.
 - **Spotlight trigger:** Removed (`⌘Space` is the precedent); Spotlight avoidance / suppression while `SpotlightState.isOpen` is retained.
-- **Music layout:** `520 × 190` — one size for every source — `132 pt` artwork with an aspect-fitted tile, scrub bar in the right column beside it (§6).
+- **Music layout:** one size for every source — 520 wide, one height per machine — `132 pt` artwork with an aspect-fitted tile, scrub bar in the right column beside it, transport midway between the time labels and the island's edge (§6).
 - **Closed-state Spotify poll:** Gate the `1.5 s` AppleScript timer to `expanded` only; rely on notifications while closed.
-- **Click behaviour:** Auto-paste is the default (`⌘V` after collapse); `⌥`-click is copy-only, per click. An **Autopaste** pill reading **On** / **Off** in both history headers toggles the default and is persisted — named for the setting rather than the outcome, because "Paste / Copy" read as an action button rather than a state. A missing Accessibility grant is surfaced as an actionable notice, not as a silent failure — see §3.
+- **Click behaviour:** Auto-paste is the default (`⌘V` after collapse); `⌥`-click is copy-only, per click. An **Autopaste** pill reading **On** / **Off** in both history headers toggles the default and is persisted — named for the setting rather than the outcome, because "Paste / Copy" read as an action button rather than a state. The same setting is a row in Settings, its only home in the clean layout. A missing Accessibility grant is surfaced as an actionable notice, not as a silent failure — see §3.
 - **Terminal panel click:** Auto-paste with trailing newline stripped so a stray Return cannot execute a pasted command.
 - **Signing identity:** Self-signed Code Signing certificate (`Dev Island Local Signing`), not ad-hoc, so TCC Accessibility and Automation grants survive rebuilds.
 - **Clipboard capture while closed:** Accepted (`0.4 s` `changeCount` integer compare).
@@ -1084,10 +1269,12 @@ any of them can be reversed.
   item never touches the real file. Copying into Application Support was rejected —
   it duplicates data silently, needs its own size cap and cleanup, and makes
   "remove from shelf" ambiguous about whether the real file is affected (§5).
-- **Default panel is Clipboard.** It is the panel that is useful the instant the
-  island opens — you open it to get something back, not to look at something.
-  Persisted, with a stored `music` migrated because that was the old default rather
-  than a choice (§2).
+- **Hover reopens on the last panel** (Phase 11, the default), persisted across
+  launches. A fixed default panel is the alternative — **Clipboard** when nothing
+  is stored, because it is the panel that is useful the instant the island opens —
+  with a stored `music` default migrated because that was the old default rather
+  than a choice. Settings and the `⇧⌘V` picker are detours and never become the
+  last panel (§2).
 - **Music is a panel, and the closed notch carries it.** A now-playing strip on
   every other panel was built and removed: it was chrome that stayed on screen and
   duplicated what the notch already showed. Music keeps its own full panel, and
@@ -1106,8 +1293,13 @@ any of them can be reversed.
   every render: a file deleted while the panel is open should not make its row
   vanish under the pointer mid-interaction.
 - **Shelf drag-in opens the shelf**, and a cancelled drag restores the previous
-  panel. The restore check is deferred 250 ms because item loading is
-  asynchronous and the drop flag is not set the instant the button comes up.
+  panel. The restore check is deferred 250 ms because the drop flag is not set the
+  instant the button comes up. Since Phase 15 the shelf opens from 100 pt away and
+  the whole island takes the drop, and the same 250 ms check is where the safety
+  net reads files that no drop delivered (§5).
+- **The shelf's drop takes any operation the source offers**, decides from the
+  pasteboard's types and reads the files only at the drop (§5, *Dock stacks*).
+  Nothing is copied or moved whichever operation is chosen.
 - **Shelf storage: references, decided.** Path plus a plain (non-security-scoped)
   bookmark, deduped by resolved path, capped ~30. Copies were rejected: they
   duplicate data silently, need a size cap and cleanup story, and make "remove
@@ -1116,15 +1308,45 @@ any of them can be reversed.
   around.
 - **Shelf click vs drag:** a row is a click *or* a drag, disambiguated by a 3 pt movement threshold in a small `NSView`. The click fires on `mouseUp`, not `mouseDown`, so press-then-drag cannot also trigger the click (§5).
 - **Shelf drag operation is copy-only, unconditionally.** A shelf holds references, so dragging out must never move the real file onto another volume. boring.notch makes this a preference; here it is not negotiable.
-- **No second collapse flag:** Phase 4 wires the existing `isInteracting` rather than adding an `isStuckWhileDragging`-style flag.
+- **No second collapse flag:** Phase 4 wires the existing `isInteracting` rather than adding an `isStuckWhileDragging`-style flag. The picker is the one other reason not to collapse on pointer exit, and it is the picker's own state (`pickerActive`), not a new flag.
 - **Not building:** Pockets, QuickLook integration, thumbnails, shift-click range selection, and shelf copies — reasons per row in §5.
+- **True black, square top corners (Phase 12).** The glass gradient and the flared
+  top corners were both removed: the island hangs straight down from the bezel.
+  The flares' width is kept as a plain inset (`openInset` 19, `closedInset` 6), so
+  no panel's body changed size and no layout moved.
+- **One spacing system (Phase 13, `IslandMetrics`).** 12 pt from the island's edge
+  to content on every side of every panel, and below the hairline; text 8 pt
+  further in, so every panel shares one left and one right text edge; corners
+  concentric — 24 outside, 12 for anything sitting in a corner (artwork, the shelf's
+  drop outline), 8 for rows, chips and the toast, 4 for header pills. Before, text
+  sat at 13, 12 and 19 pt from the edge depending on the element, and the radii
+  were 20, 10, 9, 7 and 6.
+- **Switcher icons are measured against the menu bar** — 14 pt medium (§2).
+- **Clipboard picker on `⇧⌘V`**, presets rather than a recorder, keys global only
+  while it is open (§3). `⇧⌘V` was chosen knowing it replaces *paste as plain text*
+  in Chrome, Slack and Google Docs.
+- **Settings is a panel, and the clean layout is optional (Phase 17).** Every
+  setting lives in a Settings panel (gear, `⌥⌘5`); the clean layout hides the
+  history panels' header controls and Frequent row, leaving the lists. Off by
+  default, so nothing changes unless asked (§15). This supersedes "No settings
+  window" from the original *Default panel* decision: it is a panel, not a window,
+  and it never activates the app.
 
 ### Open decisions
 
-**None.** Every question this plan raised has been settled by the shipped code, and
-the answers are recorded above rather than deleted, so the reasoning is not
-re-litigated. The two that were open longest — default panel and music-as-chrome —
-are now the *Default panel* and *Music is a panel* bullets.
+Every question the first pass raised was settled by the shipped code, and the
+answers are recorded above rather than deleted, so the reasoning is not
+re-litigated. The second pass leaves three:
+
+1. **Verify the Dock-stack drop** with `ISLAND_DRAG_PROBE=1` (§5, risk 11), then
+   remove whichever layers turned out to be unnecessary. The safety net especially
+   is a workaround; if the drop path itself works, it can go.
+2. **Should `build.sh` handle a CLT-only macOS 27 itself?** Either pick the newest
+   26.x SDK under `/Library/Developer/CommandLineTools/SDKs` when `xcode-select -p`
+   is the CLT, or document `SDKROOT` in the README and stop there (risk 12).
+3. **The README, §11 and `build.sh` disagree about the Apple Development identity.**
+   The docs say "exactly one"; `resolve_identity` takes the first of however many
+   there are (`head -1`). Make the code refuse more than one, or reword the docs.
 
 
 ---
@@ -1191,8 +1413,15 @@ Two things that cost time and are worth remembering:
   failing.
 
 **In `build.sh`:** it resolves `ISLAND_SIGN_IDENTITY` → `Dev Island Local
-Signing` → a single `Apple Development` identity → fail. No `|| true`: a silently
-unsigned build is indistinguishable from a dropped permission.
+Signing` → an `Apple Development` identity → fail. No `|| true`: a silently
+unsigned build is indistinguishable from a dropped permission. (It takes the
+*first* Apple Development identity, `head -1`, not "a single one" as this line and
+the README used to say — open decision 3 in §10.)
+
+**Without the certificate**, `ISLAND_SIGN_IDENTITY=- ISLAND_NO_INSTALL=1 ./build.sh`
+builds ad-hoc, which is how the second machine ran it: it works, and Accessibility
+has to be re-granted after every rebuild, exactly as risk 6 describes. On a
+CLT-only macOS 27 it also needs `SDKROOT` (risk 12).
 
 **Verification:**
 
@@ -1237,12 +1466,12 @@ re-check them the same way.
 | Variable | Effect |
 | --- | --- |
 | `ISLAND_EXPANDED=1` | Opens the island and sets `model.locksOpen = true`, so it stays open and can be captured. **Pass it through `open --env`** when the test depends on TCC: `open --env ISLAND_EXPANDED=1 --env ISLAND_PANEL=clipboard -a "Dev Island"`. A direct `./DevIsland.app/...` launch inherits the terminal's Accessibility grant and will report permissions the app does not actually have. Under `open --env` the window behaves identically; allow a second longer for the first paint |
-| `ISLAND_PANEL=music\|clipboard\|terminal\|shelf` | Selects the panel before first paint |
+| `ISLAND_PANEL=music\|clipboard\|terminal\|shelf\|settings` | Selects the panel before first paint |
 | `ISLAND_RENDER=<path>` + `ISLAND_RENDER_STATE=expanded\|playing\|wings` + `ISLAND_RENDER_PANEL=…` | Renders a static preview to PNG via `ImageRenderer` |
 | `ISLAND_DATA_DIR=<path>` | Sandboxes **every** store and the single-instance lock: clipboard history, shelf, ignore rules, `instance.lock`. Nothing under the real Application Support directory is read or written, which is how the time windows were exercised against invented data without risking real history. Also gives the test instance its own lock file, so it can run beside a real one |
 | `ISLAND_MEDIA_PROBE=1` | Logs every now-playing update the helper delivers (title, whether artwork decoded) to stderr |
 | `ISLAND_HISTORY=<path>` | Point the terminal panel at a fixture instead of `~/.zsh_history`, so window filters and parsing can be exercised without touching real shell history |
-| `ISLAND_DRAG_PROBE=1` | Logs every `.leftMouseDragged` with both gate inputs (`content`, `count`, `base`, `inside`, `types`) to stderr. The only reliable way to inspect drag events — a standalone binary launched from a terminal does not inherit the app's TCC grant and sees nothing |
+| `ISLAND_DRAG_PROBE=1` | Logs every `.leftMouseDragged` with both gate inputs (`content`, `count`, `base`, `inside`, `types`) to stderr, and since Phase 15 the whole drop path: the drag reaching the zone, what `FileDropView` saw on entry (`mask`, the operation chosen, whether the island was open, the types), whether it accepted and performed the drop and how long the read took, the release, and whether the safety net was needed. The only reliable way to inspect drag events from inside the app. (The second pass did get global dragged events in a standalone, listen-only probe run from the development shell — the "sees nothing" below did not reproduce there — but that probe can only see the drag, never the drop) |
 
 `locksOpen` is the reason a screenshot session does not collapse under the
 pointer; it is checked in `scheduleCollapse()` alongside `isInteracting` (§1).
@@ -1251,7 +1480,24 @@ pointer; it is checked in `scheduleCollapse()` alongside `isInteracting` (§1).
 
 - `ImageRenderer` cannot rasterise `ScrollView`, `LazyVStack`, or
   `NSViewRepresentable`, so preview renders show empty lists. Use a live capture
-  for anything with rows.
+  for anything with rows. (The shelf renders as a yellow no-entry placeholder for
+  the same reason.)
+- **Previews render at 185 × 32**, the default of `IslandModel.notchSize`, whatever
+  the machine. A height that only breaks on a taller notch never shows in an
+  `ISLAND_RENDER` — which is how the 190 pt music panel's squeeze on a 37.5 pt notch
+  went unseen. The second pass measured both notches with a scratch-only patch that
+  set `notchSize` from an environment variable; worth making real if layout work
+  continues.
+- **A preview shares the real preferences domain** (`dev.island`), and the model's
+  property observers write `UserDefaults`. The stock preview path writes nothing —
+  `activePanel` is guarded by `PreviewMode.active` and nothing else it sets is
+  persisted — but a new preview knob that sets a persisted property would overwrite
+  the user's setting. The second pass rendered from a copy with
+  `CFBundleIdentifier` changed for that reason.
+- **Measure layout from the pixels, not the code.** The second pass's padding
+  numbers come from scanning renders for the island's edge and the first content
+  pixel, before and after. That is what found the 3 pt of empty line under the
+  time labels, which the code alone does not show.
 - `screencapture -x -R` fails with "could not create image from rect" while the
   island window is up. Capture the full screen and crop.
 - Captures go black when the display sleeps, and **fail outright** when the screen
@@ -1323,6 +1569,13 @@ Four pieces, extracted to `Sources/PanelChrome.swift`:
 | `FrequentChip(symbol:text:monospaced:help:action:)` | 2 | 24 pt strip, 22 pt pills, radius 7, `0.055` fill, `0.07` stroke |
 | `HistoryRow(symbol:text:monospaced:help:action:trailing:)` | 2 | 26 pt, `8/14` padding, hover fill, 13 pt icon, middle-truncated 12 pt label |
 
+**Since changed by the second pass's spacing system** (§10, `IslandMetrics`):
+header trailing inset 6 → 2 (`headerTrailingInset`, so a trailing pill's *label*
+ends on the rows' text edge), row padding `8/14` → `8/8`, chip padding 7 → 8, and
+row and chip radius 6 / 7 → 8. `HistoryRow` also gained `selected` for the picker,
+and `HistoryWindowPicker` is now a thin wrapper over a generic `PillPicker`, which
+the Settings panel uses too.
+
 `HistoryRow` takes a trailing `@ViewBuilder` because that is the only place the two
 rows differed — a `TimelineView(.everyMinute)` age on one, `"%d×"` on the other.
 The age helper became an `Age` enum; `ClipEntry.isMonospaced` carries the
@@ -1344,12 +1597,13 @@ One line per file, so a reviewer can go straight to the part they care about.
 
 | File | Responsibility |
 | --- | --- |
-| `App.swift` | Entry point, single-instance `flock`, no-notch guard, status item, headless preview renderer, `applicationWillTerminate` |
-| `IslandController.swift` | The `NSPanel`, window geometry (grow to `max(old,new)`, settle), global event monitors, drag detector, collapse timing, mouse policy |
-| `IslandModel.swift` | All state: panel selection, geometry, paste delivery, `PlayerService` (sources, polling, toast). The only `ObservableObject` the views observe besides the services |
-| `IslandView.swift` | `IslandRootView`, `NotchShape`, the four panels, the toast, the chips/pills/picker views |
-| `Panels.swift` | `PanelID` (sizes, symbols, order), `PanelProvider` protocol, `PanelHost` lifecycle, the four providers |
-| `HotKeys.swift` | Carbon `RegisterEventHotKey`: `⌥⌘1–4`, `⌥⌘←/→`, installed only while expanded |
+| `App.swift` | Entry point, single-instance `flock`, no-notch guard, status item (Default Panel, Clipboard Shortcut, Clean Layout), headless preview renderer, `applicationWillTerminate` |
+| `IslandController.swift` | The `NSPanel` and its `FileDropView` content view, window geometry (grow to `max(old,new)`, settle), global event monitors, drag detector and its 100 pt `dragZone`, the drop safety net, opening and closing the picker, collapse timing, mouse policy |
+| `IslandModel.swift` | All state: panel selection (last panel, the Settings and picker detours), geometry, paste delivery, the picker, clean layout, the clipboard shortcut, `PlayerService` (sources, polling, toast). The only `ObservableObject` the views observe besides the services |
+| `IslandView.swift` | `IslandMetrics` (padding and corners), `IslandRootView`, `NotchShape`, `PanelSurface`, the five panels, `PillPicker`, the toast, the chin (`WingContent`) |
+| `Panels.swift` | `PanelID` (sizes, symbols, order, `contentPanels`, `settingsHeight`), `PanelProvider` protocol, `PanelHost` lifecycle, the providers |
+| `HotKeys.swift` | Carbon `RegisterEventHotKey` in three groups — the clipboard shortcut (always), `⌥⌘1–5` and `⌥⌘←/→` (while expanded), the picker's keys (while it is open) — and the `ClipboardShortcut` presets |
+| `FileDropView.swift` | The island's file drop target: types-only acceptance, whichever operation the source offers, URL reading shared with the safety net |
 | `FullscreenSupport.swift` | SkyLight space attach so the island survives fullscreen Spaces |
 | `SpotlightState.swift` | Is Spotlight open — drives suppression |
 
@@ -1361,7 +1615,7 @@ One line per file, so a reviewer can go straight to the part they care about.
 | `MediaRemote.swift` | dlsym bridge for **commands only** (play/pause/next/seek); reading is dead on macOS 15.4+ |
 | `MediaStream.swift` | Spawns `/usr/bin/perl` with the vendored adapter, reads JSON lines, restarts on death, sweeps orphans by pid file |
 | `MediaStreamDecoder.swift` | JSON line → `NowPlaying`, including the patch rule (title-less payloads merge into the current track) |
-| `MusicLayout.swift` | The music panel's one size (520 × 190) and the aspect-fitted tile |
+| `MusicLayout.swift` | The music panel's width, its notch-following height, and the aspect-fitted tile |
 | `CoreAnimationEqualizer.swift` | The chin's three bars, as `CALayer` animations the window server interpolates |
 
 ### Panels
@@ -1374,7 +1628,7 @@ One line per file, so a reviewer can go straight to the part they care about.
 | `TerminalService.swift` | File watcher, trivia filter, window filter, cached ranking, flush-option notice |
 | `ShelfStore.swift` | File references (path + plain bookmark), dedupe, 30-entry cap, load-time pruning |
 | `IgnoreRules.swift` | The manual trivia deny-list (`ignore-rules.txt`) |
-| `PanelChrome.swift` | Section header, empty state, `FrequentChip`, `HistoryRow` — shared by three panels |
+| `PanelChrome.swift` | Section header, empty state, `FrequentChip`, `HistoryRow` (with the picker's selected state) — shared by three panels |
 | `HistoryWindow.swift` | `24h / 7d / 30d / All` as a pure filter, with the untimestamped rule |
 | `AccessibilityPaster.swift` | Posts the synthetic ⌘V, and asks for the grant once per launch |
 | `AppSupport.swift` | The Application Support directory, and the `ISLAND_DATA_DIR` sandbox |
@@ -1384,6 +1638,72 @@ One line per file, so a reviewer can go straight to the part they care about.
 
 | File | Notes |
 | --- | --- |
-| `build.sh` | Target arch from `uname -m`, identity resolution, `swiftc`, compiles the vendored framework with `clang`, signs framework-then-bundle, installs to `~/Applications` and registers it |
+| `build.sh` | Target arch from `uname -m`, identity resolution, `swiftc`, compiles the vendored framework with `clang`, signs framework-then-bundle, installs to `~/Applications` and registers it. Needs `SDKROOT` at a 26.x SDK on a CLT-only macOS 27 (risk 12) |
 | `Info.plist` | `dev.island`, `LSUIElement` (no Dock icon), AppleEvents usage string |
 | `vendor/mediaremote-adapter/` | BSD-3 source, compiled at build time; licence ships in `Contents/Resources` |
+
+---
+
+## 15. Second pass (15 Nov)
+
+The app was built and run on a second machine (§1: a 208 × 37.5 pt notch, Command
+Line Tools only) and adjusted from use. Everything below is written up in the
+section it belongs to; this is the index, in the order it came up.
+
+| Report | Found | Changed | § |
+| --- | --- | --- | --- |
+| `./build.sh` fails | CLT-only macOS 27: the 27.2 SDK's `@State` is a macro whose plugin ships only with Xcode | Built with `SDKROOT` at the 26.5 SDK; `build.sh` unchanged | risk 12, §10 |
+| Reopening forgets the panel — after a drop it lands on Clipboard | `expand()` always selected `defaultPanel` | `panelOnOpen`; *Last Used* is the default; the last panel is persisted | §2 |
+| "Not as dark as it should be" | A 5.5% → 1.2% white gradient under the band | Pure black (`PanelSurface`) | §6 |
+| Remove the "bullhorns" on the top edges | `NotchShape`'s flared top corners | Square top corners; the flare width kept as an inset so nothing moved | §10 |
+| Padding wider at the sides than at the bottom | A constant 190 pt music panel: on a 37.5 pt notch, 9 pt under the artwork against 13 at the sides | `IslandMetrics`: 12 pt on every side; heights follow the notch | §2, §6 |
+| Transport small, and not centred between the bar and the edge | A 28 pt circle pinned to the artwork's bottom: 18 pt above it, 12 below | A 36 pt circle; 12 above and 12 below, measured | §6 |
+| The chin covers the waveform but not the artwork | Artwork flush with the island's edge (0 pt), bars 1.5 pt in | Square wings with matching slots: 8.75 pt all round on the second machine | §2 |
+| Rounding and padding differ between items | Text 13 / 12 / 19 pt from the edge; radii 20, 10, 9, 7, 6 | One text edge (padding + 8); concentric radii 24 / 12 / 8 / 4 | §10, §13 |
+| Icons smaller than the menu bar's | 12 pt semibold against the menu bar's 14 pt medium, measured from a screenshot | 14 pt medium | §2 |
+| A file has to reach the cutout, then come back down | The hot zone was the cutout; the drop target was only the list | 100 pt reach; the whole island is the target | §5 |
+| Drags from the Dock's Downloads stack do nothing | Detection identical to Finder (probe); the difference is at the drop | Three layers and a probe; **unverified** | §5, risk 11 |
+| A ⊞V-style way to paste from history | — | The `⇧⌘V` picker | §3 |
+| Too many controls on the history panels | Header pills and the Frequent row on every visit | A Settings panel; an optional clean layout | below |
+
+### Settings panel and the clean layout
+
+A gear after the music note (`⌥⌘5`), `520 × (notch + 233)`: six rows, each a label
+with a one-line hint under it and a `PillPicker` — the history-window control
+generalised, `small` in headers and `regular` here.
+
+| Row | Options |
+| --- | --- |
+| Clean layout | Off / On |
+| Autopaste | Off / On. The hint becomes the Accessibility warning when the grant is missing, and opens Privacy & Security when clicked |
+| Clipboard shortcut | `⇧⌘V` / `⌥⌘V` / `⌃⌘V` / Off. The hint says "In use by another app" when registration failed |
+| Clipboard history | 24h / 7d / 30d / All |
+| Terminal history | 24h / 7d / 30d / All |
+| Opens on | Last used / Clipboard / Terminal / Shelf / Music |
+
+**The clean layout** hides the clipboard and terminal panels' header — `FREQUENT`,
+the Autopaste pill, the windows, the command count — and the Frequent chips,
+leaving just the lists. It is off by default, so nothing changes unless asked, and
+the Settings panel exists either way. Three things deliberately stay: the shelf's
+header, which carries a count and the drop hint rather than settings; the notice
+strips (Accessibility, zsh history), because those are problems, not preferences;
+and the status item's Default Panel, Clipboard Shortcut and a new Clean Layout
+toggle, because the status item is the one place reachable while the island is
+closed.
+
+Settings is never a default panel nor the last panel (`PanelID.contentPanels`), and
+it clears the notice strip rather than show one, because its height is its rows.
+
+### How this pass was checked
+
+- **Layout by pixel measurement**, not by eye: previews rendered at both notch
+  heights, scanned for the island's edge and the first content pixel on every side,
+  before and after. Every padding number in this pass is a measurement.
+- **Icons against a screenshot** of the real menu bar, by rendering SF Symbols at
+  candidate sizes and weights until one reproduced `play.circle`'s size and ring.
+- **The Dock by a listen-only probe**, outside the app — events and type names
+  only, never pasteboard contents.
+- **Shortcuts by a register-and-release probe**: all nine combinations were free.
+- **Not checkable from outside**: a live drop from the Dock, the picker's keys in
+  use, and the clean layout's list rows (`ImageRenderer` cannot draw a
+  `ScrollView`). Those are the "confirm in use" entries in §8.

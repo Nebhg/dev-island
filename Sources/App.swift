@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 enum PreviewMode {
-    /// ImageRenderer cannot rasterise NSViewRepresentable, so previews draw a
-    /// plain fill instead of the real glass surface.
+    /// Set while rendering an `ISLAND_RENDER` preview, so the throwaway model
+    /// it builds does not write the user's preferences.
     static var active = false
 }
 
@@ -154,7 +154,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let defaultItem = NSMenuItem(title: "Default Panel", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
-        for panel in PanelID.allCases {
+        let lastUsed = NSMenuItem(title: "Last Used", action: #selector(useLastPanel), keyEquivalent: "")
+        lastUsed.target = self
+        submenu.addItem(lastUsed)
+        submenu.addItem(.separator())
+        for panel in PanelID.contentPanels {
             let entry = NSMenuItem(
                 title: panel.title,
                 action: #selector(setDefaultPanel(_:)),
@@ -166,6 +170,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         defaultItem.submenu = submenu
         menu.addItem(defaultItem)
+
+        let shortcutItem = NSMenuItem(title: Self.shortcutMenuTitle, action: nil, keyEquivalent: "")
+        let shortcutMenu = NSMenu()
+        for shortcut in ClipboardShortcut.allCases {
+            let entry = NSMenuItem(title: shortcut.title, action: #selector(setClipboardShortcut(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = shortcut.rawValue
+            shortcutMenu.addItem(entry)
+        }
+        shortcutMenu.addItem(.separator())
+        let off = NSMenuItem(title: "Off", action: #selector(setClipboardShortcut(_:)), keyEquivalent: "")
+        off.target = self
+        shortcutMenu.addItem(off)
+        shortcutItem.submenu = shortcutMenu
+        menu.addItem(shortcutItem)
+
+        menu.addItem(makeItem(Self.cleanLayoutTitle, #selector(toggleCleanLayout)))
 
         menu.addItem(.separator())
         menu.addItem(makeItem("Edit Ignore Rules…", #selector(editIgnoreRules)))
@@ -191,18 +212,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let panel = PanelID(rawValue: raw)
         else { return }
         controller?.defaultPanel = panel
+        controller?.reopensLastPanel = false
+    }
+
+    @objc private func useLastPanel() {
+        controller?.reopensLastPanel = true
+    }
+
+    private static let shortcutMenuTitle = "Clipboard Shortcut"
+    private static let cleanLayoutTitle = "Clean Layout"
+
+    @objc private func toggleCleanLayout() {
+        controller?.cleanLayout.toggle()
+    }
+
+    /// `representedObject` is the shortcut's raw value; "Off" has none.
+    @objc private func setClipboardShortcut(_ sender: NSMenuItem) {
+        controller?.clipboardShortcut = (sender.representedObject as? String).flatMap(ClipboardShortcut.init(rawValue:))
     }
 }
 
 extension AppDelegate: NSMenuDelegate {
     /// Checkmarks are refreshed on open rather than kept in sync.
     func menuWillOpen(_ menu: NSMenu) {
+        let reopens = controller?.reopensLastPanel ?? true
         let current = controller?.defaultPanel
-        for item in menu.items where item.action == #selector(setDefaultPanel(_:)) {
-            item.state = (item.representedObject as? String) == current?.rawValue ? .on : .off
-        }
         for item in menu.items.first(where: { $0.title == "Default Panel" })?.submenu?.items ?? [] {
-            item.state = (item.representedObject as? String) == current?.rawValue ? .on : .off
+            if item.action == #selector(useLastPanel) {
+                item.state = reopens ? .on : .off
+            } else if item.action == #selector(setDefaultPanel(_:)) {
+                let isDefault = (item.representedObject as? String) == current?.rawValue
+                item.state = !reopens && isDefault ? .on : .off
+            }
+        }
+
+        menu.items.first(where: { $0.title == Self.cleanLayoutTitle })?.state =
+            controller?.cleanLayout == true ? .on : .off
+
+        // A shortcut another app already holds cannot be registered; say so on
+        // the checked entry rather than leaving it looking active.
+        let shortcut = controller?.clipboardShortcut
+        let available = controller?.clipboardShortcutAvailable ?? true
+        for item in menu.items.first(where: { $0.title == Self.shortcutMenuTitle })?.submenu?.items ?? [] {
+            guard item.action == #selector(setClipboardShortcut(_:)) else { continue }
+            let raw = item.representedObject as? String
+            item.state = raw == shortcut?.rawValue ? .on : .off
+            if let raw, let option = ClipboardShortcut(rawValue: raw) {
+                item.title = raw == shortcut?.rawValue && !available
+                    ? "\(option.title) — in use by another app"
+                    : option.title
+            }
         }
     }
 }

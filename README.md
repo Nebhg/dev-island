@@ -80,25 +80,42 @@ commands have no timestamps and only appear under "All".
 
 ## Using it
 
-- **Open** by hovering the notch; it closes shortly after the pointer leaves.
-- **Switch panels** with the icons either side of the cutout, `⌥⌘1`–`⌥⌘4`, or
+- **Open** by hovering the notch; it closes shortly after the pointer leaves. It
+  reopens on whichever panel you left it on.
+- **Paste from history with `⇧⌘V`**, like ⊞V on Windows: the island opens on the
+  clipboard without the pointer, `↑` / `↓` choose, `↩` pastes into the app you were
+  in, `⌥↩` only copies, and `⎋`, a click elsewhere or switching apps closes it. The
+  arrow and Return keys are only taken while it is open. Change or turn off the
+  shortcut in Settings or under **Clipboard Shortcut** in the menu bar capsule.
+- **Switch panels** with the icons either side of the cutout, `⌥⌘1`–`⌥⌘5`, or
   `⌥⌘←` / `⌥⌘→` to cycle. The shortcuts only exist while the island is open.
 - **Click a row** to paste into whatever had focus, or copy. `⌥`-click always
   copies. The **Autopaste** pill toggles the default and is remembered; either way
   a short toast says what happened — `Auto-pasted` or `Copied to clipboard`.
 - **Time windows** — `24h / 7d / 30d / All` on both history panels. A filter, not
   retention: choosing 24h hides rows and deletes nothing.
-- **Drag a file at the closed notch** to put it on the shelf; drag it out again
-  to move it where it belongs. The shelf holds references, so removing a row never
-  touches the real file.
-- **Quit** from the capsule in the menu bar. There is deliberately no login item.
+- **Drag a file towards the notch** to put it on the shelf — from Finder or a Dock
+  stack such as Downloads. The shelf opens once the file is within about 100 pt and
+  takes the drop anywhere on the island. Drag it out again to move it where it
+  belongs. The shelf holds references, so removing a row never touches the real
+  file.
+- **Settings** is the gear panel (`⌥⌘5`): Clean layout, Autopaste, the clipboard
+  shortcut, both history windows, and which panel hover opens on (Last used, or
+  always one). **Clean layout** hides the history panels' filters and Frequent row,
+  leaving just the lists; it is off by default. The menu bar capsule has Default
+  Panel, Clipboard Shortcut and Clean Layout too.
+- **Quit** from the same capsule. There is deliberately no login item.
 
 | Panel | Size | What it holds |
 | --- | --- | --- |
 | Clipboard | 520 × 320 | History with frecency chips, ages, kinds |
 | Terminal | 520 × 320 | `~/.zsh_history`, trivia filtered |
-| Shelf | 440 × 102–260 | File references; height follows the count |
-| Music | 520 × 190 | Artwork, scrub, transport |
+| Shelf | 440 × 106–260 | File references; height follows the count |
+| Music | 520 × 188* | Artwork, scrub, transport |
+| Settings | 520 × 265* | Every setting, one row each |
+
+\* On a 32 pt notch; these two grow with a taller one (the music panel is 193.5 on a
+37.5 pt notch), so the padding stays even.
 
 ![Terminal panel](docs/terminal.png)
 
@@ -126,6 +143,8 @@ reading is gated.
 | Auto-paste only copies | Accessibility grant missing for this build. Re-grant after an ad-hoc rebuild, or use a stable identity |
 | Terminal panel is empty or stale | The two `setopt` lines above, then open a **new** terminal window |
 | Music panel empty, Spotify is playing | Automation permission for Spotify |
+| `⇧⌘V` does nothing | Another app holds it; the Clipboard Shortcut menu says "in use by another app". Pick another |
+| A dragged file will not drop | Run with `ISLAND_DRAG_PROBE=1`: it logs the operations the source allows and what the island chose |
 | Nothing at all | Run it from Terminal to see stderr: `./DevIsland.app/Contents/MacOS/DevIsland` |
 | Two media helpers / odd duplicates | Relaunch; the app sweeps a stale helper at startup by pid file |
 

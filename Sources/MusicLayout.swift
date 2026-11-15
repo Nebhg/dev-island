@@ -13,9 +13,15 @@ import CoreGraphics
 /// varies.
 enum MusicLayout {
     static let panelWidth: CGFloat = 520
-    static let panelHeight: CGFloat = 190
 
     static let artworkHeight: CGFloat = 132
+
+    /// The switcher band, then the artwork with the panel padding above and below.
+    /// Follows the notch rather than being fixed: a fixed 190 pt was tuned on a
+    /// 32 pt notch, and a 37.5 pt one squeezed the padding under the artwork.
+    static func panelHeight(notchHeight: CGFloat) -> CGFloat {
+        notchHeight + 2 * IslandMetrics.panelPadding + artworkHeight
+    }
     /// A 16:9 tile at this height is ~235 pt; the cap only stops something absurd
     /// from eating the whole panel.
     static let maxArtworkWidth: CGFloat = 236

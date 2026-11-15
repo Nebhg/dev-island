@@ -27,12 +27,18 @@ struct IslandRootView: View {
     /// Where the content is laid out, and where the shape is heading.
     private var target: CGSize { model.islandSize }
 
-    // BoringNotch's corner language: 6/14 when closed, 19/24 when open.
-    private var topRadius: CGFloat { model.expanded ? 19 : 6 }
-    private var bottomRadius: CGFloat { model.expanded ? 24 : 14 }
+    // The insets are BoringNotch's top radii, kept as plain insets now that the top
+    // corners are square, so the body of every panel is still the size its content
+    // was laid out for.
+    private var sideInset: CGFloat {
+        model.expanded ? IslandMetrics.openInset : IslandMetrics.closedInset
+    }
+    private var bottomRadius: CGFloat {
+        model.expanded ? IslandMetrics.openBottomRadius : IslandMetrics.closedBottomRadius
+    }
 
     private var shape: NotchShape {
-        NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
+        NotchShape(sideInset: sideInset, bottomRadius: bottomRadius)
     }
 
     var body: some View {
@@ -45,11 +51,10 @@ struct IslandRootView: View {
                 .background(alignment: .top) {
                     ZStack(alignment: .top) {
                         shape.fill(.black)
-                        // The glass belongs to the shell rather than the panel, so it
-                        // fills the shape as it animates instead of sitting inside a
-                        // larger black card mid-switch. The notch band above it stays
-                        // pure black, so the cutout remains invisible.
-                        GlassSurface()
+                        // The surface belongs to the shell rather than the panel, so
+                        // it fills the shape as it animates instead of sitting inside
+                        // a larger card mid-switch.
+                        PanelSurface()
                             .padding(.top, model.notchSize.height)
                     }
                 }
@@ -59,7 +64,7 @@ struct IslandRootView: View {
                     Rectangle()
                         .fill(.black)
                         .frame(height: 1)
-                        .padding(.horizontal, topRadius)
+                        .padding(.horizontal, sideInset)
                         .allowsHitTesting(false)
                 }
                 .contentShape(shape)
@@ -97,46 +102,80 @@ struct IslandRootView: View {
 }
 
 
-/// Rounded on all four corners; the top pair is much tighter so the shape still
-/// reads as attached to the bezel.
+/// The island's spacing and corner system, in one place so the shape, the window
+/// size and every panel agree.
+///
+/// One padding on every side of every panel, and corners that are concentric with
+/// the body's: anything sitting `panelPadding` in from a corner gets
+/// `openBottomRadius - panelPadding`, so the gap around it stays even as it turns
+/// the corner.
+enum IslandMetrics {
+    /// How far the body sits in from the window's sides.
+    static let closedInset: CGFloat = 6
+    static let openInset: CGFloat = 19
+
+    static let closedBottomRadius: CGFloat = 14
+    static let openBottomRadius: CGFloat = 24
+
+    /// From the body's edge to its content, on the sides and bottom, and from the
+    /// hairline under the switcher to the content at the top.
+    static let panelPadding: CGFloat = 12
+
+    /// Large surfaces that sit in a corner: artwork, the shelf's drop outline.
+    static let innerRadius: CGFloat = openBottomRadius - panelPadding
+
+    /// Rows and chips. Their backgrounds sit on the padding line; their text sits
+    /// this far further in, so every panel's text shares one left and right edge.
+    static let textInset: CGFloat = 8
+    static let rowRadius: CGFloat = 8
+
+    /// A section header's right padding. Less than `textInset` because headers
+    /// usually end in a pill with its own 6 pt of padding, so the pill's label
+    /// ends on the rows' text edge.
+    static let headerTrailingInset: CGFloat = textInset - 6
+
+    /// The closed island's artwork while music plays.
+    static let wingArtwork: CGFloat = 20
+}
+
+/// Hangs straight down from the top edge: square top corners against the bezel,
+/// rounded bottom corners.
+///
+/// The sides sit `sideInset` in from the window's edges. That margin used to hold
+/// flares curving out into the menu bar; they were dropped for a plainer
+/// silhouette, and the margin kept so the body did not change size.
 struct NotchShape: Shape {
-    var topRadius: CGFloat
+    var sideInset: CGFloat
     var bottomRadius: CGFloat
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(topRadius, bottomRadius) }
+        get { AnimatablePair(sideInset, bottomRadius) }
         set {
-            topRadius = newValue.first
+            sideInset = newValue.first
             bottomRadius = newValue.second
         }
     }
 
     func path(in rect: CGRect) -> Path {
         let limit = min(rect.width, rect.height) / 2
-        let tr = min(topRadius, limit)
+        let inset = min(sideInset, limit)
         let br = min(bottomRadius, limit)
+        let left = rect.minX + inset
+        let right = rect.maxX - inset
 
         var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.move(to: CGPoint(x: left, y: rect.minY))
+        path.addLine(to: CGPoint(x: left, y: rect.maxY - br))
         path.addQuadCurve(
-            to: CGPoint(x: rect.minX + tr, y: rect.minY + tr),
-            control: CGPoint(x: rect.minX + tr, y: rect.minY)
+            to: CGPoint(x: left + br, y: rect.maxY),
+            control: CGPoint(x: left, y: rect.maxY)
         )
-        path.addLine(to: CGPoint(x: rect.minX + tr, y: rect.maxY - br))
+        path.addLine(to: CGPoint(x: right - br, y: rect.maxY))
         path.addQuadCurve(
-            to: CGPoint(x: rect.minX + tr + br, y: rect.maxY),
-            control: CGPoint(x: rect.minX + tr, y: rect.maxY)
+            to: CGPoint(x: right, y: rect.maxY - br),
+            control: CGPoint(x: right, y: rect.maxY)
         )
-        path.addLine(to: CGPoint(x: rect.maxX - tr - br, y: rect.maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - tr, y: rect.maxY - br),
-            control: CGPoint(x: rect.maxX - tr, y: rect.maxY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX - tr, y: rect.minY + tr))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.minY),
-            control: CGPoint(x: rect.maxX - tr, y: rect.minY)
-        )
+        path.addLine(to: CGPoint(x: right, y: rect.minY))
         path.closeSubpath()
         return path
     }
@@ -172,13 +211,12 @@ struct ExpandedPanel: View {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            // A gap under the hairline that separates the notch band from the
-            // glass. Without it the first label sat hard against the separator.
-            .padding(.top, 10)
-            .padding(.bottom, 8)
-            // NotchShape tapers inward by topRadius on each side, so the body is
-            // narrower than the panel. Content has to clear that or it gets clipped.
-            .padding(.horizontal, 24)
+            // The same padding on all four sides: below the hairline, above the
+            // bottom edge, and in from each side of the body. NotchShape sits in by
+            // openInset, so the side padding is measured from there.
+            .padding(.top, IslandMetrics.panelPadding)
+            .padding(.bottom, IslandMetrics.panelPadding)
+            .padding(.horizontal, IslandMetrics.openInset + IslandMetrics.panelPadding)
         }
     }
 
@@ -189,6 +227,7 @@ struct ExpandedPanel: View {
         case .clipboard: ClipboardPanel(model: model, clipboard: model.clipboard)
         case .terminal: TerminalPanel(model: model, terminal: model.terminal)
         case .shelf: ShelfPanel(model: model, shelf: model.shelf)
+        case .settings: SettingsPanel(model: model, clipboard: model.clipboard, terminal: model.terminal)
         }
     }
 }
@@ -227,8 +266,11 @@ struct PanelBar: View {
         HStack(spacing: 14) {
             ForEach(panels) { panel in
                 Button { model.selectPanel(panel) } label: {
+                    // The menu bar's own symbol size. Measured, not guessed: the
+                    // system's now-playing item is `play.circle` at 14 × 14 pt with
+                    // a 1.5 pt ring, which is what SF Symbols draws at 14 pt medium.
                     Image(systemName: panel.symbol)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(
                             .white.opacity(model.activePanel == panel ? 0.95 : 0.3)
                         )
@@ -242,27 +284,21 @@ struct PanelBar: View {
     }
 }
 
-/// Black, but with a glassy lower half.
+/// The panel body under the notch band: pure black, like the band and the cutout,
+/// with one hairline separating the panel switcher from the content.
 ///
-/// The notch band above stays pure black so the cutout is invisible against it;
-/// below, a faint gradient and a hairline read as a pane rather than a flat
-/// rectangle. Deliberately not `.ultraThinMaterial`: a material samples the desktop
-/// and would make the island's edge visible against the bezel.
-struct GlassSurface: View {
+/// This used to carry a faint white gradient (5.5% → 1.2%) to read as glass; it was
+/// dropped so the whole island is the same true black. Deliberately not
+/// `.ultraThinMaterial`: a material samples the desktop and would make the island's
+/// edge visible against the bezel.
+struct PanelSurface: View {
     var body: some View {
-        ZStack {
-            Color.black
-            LinearGradient(
-                colors: [.white.opacity(0.055), .white.opacity(0.012)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(.white.opacity(0.09))
-                .frame(height: 0.5)
-        }
+        Color.black
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(.white.opacity(0.09))
+                    .frame(height: 0.5)
+            }
     }
 }
 
@@ -301,32 +337,68 @@ struct PasteToggle: View {
 }
 
 /// The 24h / 7d / 30d / All control in a history panel's header.
-///
-/// Four small buttons rather than a `Picker`, because a segmented control inside
-/// a 14 pt header row is taller than the row and drags the layout around. The
-/// selected one gets a faint fill; the rest stay at 0.3 so the row still reads as
-/// a label first and a control second.
 struct HistoryWindowPicker: View {
     let window: HistoryWindow
     let select: (HistoryWindow) -> Void
 
     var body: some View {
+        PillPicker(
+            options: HistoryWindow.allCases,
+            selection: window,
+            label: { $0.label },
+            help: { $0.title },
+            select: select
+        )
+    }
+}
+
+/// How big a `PillPicker` is drawn.
+enum PillSize {
+    /// Inside a 14 pt panel header.
+    case small
+    /// In a Settings row.
+    case regular
+
+    var font: CGFloat { self == .small ? 9 : 11 }
+    var height: CGFloat { self == .small ? 14 : 20 }
+    var radius: CGFloat { self == .small ? 4 : 6 }
+    /// Each pill's own horizontal padding; callers subtract it so the last
+    /// pill's label, not its fill, ends on the panels' text edge.
+    var padding: CGFloat { self == .small ? 6 : 8 }
+}
+
+/// A row of pills with one selected: the history windows in a panel header, and
+/// every control in Settings.
+///
+/// Small buttons rather than a `Picker`, because a segmented control inside a
+/// 14 pt header row is taller than the row and drags the layout around. The
+/// selected one gets a faint fill; the rest stay at 0.3 so a row still reads as
+/// a label first and a control second.
+struct PillPicker<Option: Hashable>: View {
+    let options: [Option]
+    let selection: Option
+    var size: PillSize = .small
+    let label: (Option) -> String
+    var help: ((Option) -> String)?
+    let select: (Option) -> Void
+
+    var body: some View {
         HStack(spacing: 2) {
-            ForEach(HistoryWindow.allCases) { option in
+            ForEach(options, id: \.self) { option in
                 Button { select(option) } label: {
-                    Text(option.label)
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white.opacity(window == option ? 0.9 : 0.3))
-                        .padding(.horizontal, 6)
-                        .frame(height: 14)
+                    Text(label(option))
+                        .font(.system(size: size.font, weight: .semibold))
+                        .foregroundStyle(.white.opacity(selection == option ? 0.9 : 0.3))
+                        .padding(.horizontal, size.padding)
+                        .frame(height: size.height)
                         .background(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(.white.opacity(window == option ? 0.12 : 0))
+                            RoundedRectangle(cornerRadius: size.radius, style: .continuous)
+                                .fill(.white.opacity(selection == option ? 0.12 : 0))
                         )
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(option.title)
+                .help(help?(option) ?? label(option))
             }
         }
     }
@@ -366,6 +438,8 @@ struct NoticeStrip: View {
         }
         .foregroundStyle(.orange.opacity(0.85))
         .frame(height: 14)
+        // On the panels' text edge, not the padding line: it has no background.
+        .padding(.horizontal, IslandMetrics.textInset)
         .contentShape(Rectangle())
     }
 }
@@ -382,12 +456,9 @@ struct ShelfPanel: View {
     @ObservedObject var model: IslandModel
     @ObservedObject var shelf: ShelfStore
 
-    @State private var isTargeted = false
-
-    /// Shares `ISLAND_DRAG_PROBE` with the controller, so one flag traces a drag
-    /// from the monitor through to the drop landing.
-    private static let dropProbe =
-        ProcessInfo.processInfo.environment["ISLAND_DRAG_PROBE"] == "1"
+    /// The drop itself is handled by `FileDropView`, which covers the whole island
+    /// rather than only this panel — see there for why it is AppKit.
+    private var isTargeted: Bool { model.fileDropTargeted }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -401,13 +472,10 @@ struct ShelfPanel: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .overlay(
             // A drop zone with no feedback reads as broken.
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: IslandMetrics.innerRadius, style: .continuous)
                 .strokeBorder(.white.opacity(isTargeted ? 0.35 : 0), lineWidth: 1)
                 .animation(.easeOut(duration: 0.12), value: isTargeted)
         )
-        .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
-            handleDrop(providers)
-        }
     }
 
     private var header: some View {
@@ -417,6 +485,9 @@ struct ShelfPanel: View {
                  : "\(shelf.items.count) item\(shelf.items.count == 1 ? "" : "s")")
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.22))
+                // The header leaves room for a pill's own padding; plain text
+                // makes it up so it still ends on the rows' text edge.
+                .padding(.trailing, IslandMetrics.textInset - IslandMetrics.headerTrailingInset)
         }
     }
 
@@ -427,7 +498,6 @@ struct ShelfPanel: View {
                     ShelfRow(item: item, model: model, shelf: shelf)
                 }
             }
-            .padding(.bottom, 2)
         }
     }
 
@@ -444,44 +514,6 @@ struct ShelfPanel: View {
                 .foregroundStyle(.white.opacity(0.3))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    /// Returns true synchronously so AppKit accepts the drop; the items load
-    /// asynchronously because `NSItemProvider` may hand back a file promise.
-    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        // Files only. Text and links are the clipboard's job: copying them is one
-        // keystroke, the clipboard already captures them automatically, and a shelf
-        // row would add a second place to look for the same string. A file is the
-        // one thing the clipboard cannot hold as a usable reference.
-        let fileProviders = providers.filter {
-            $0.registeredTypeIdentifiers.contains(UTType.fileURL.identifier)
-        }
-        guard !fileProviders.isEmpty else {
-            if Self.dropProbe {
-                NSLog("[probe] drop rejected, no file provider: \(providers.flatMap(\.registeredTypeIdentifiers).prefix(6))")
-            }
-            return false
-        }
-
-        if Self.dropProbe {
-            NSLog("[probe] drop providers=\(fileProviders.count)")
-        }
-
-        // Set before any async work: the controller checks this on mouse-up to tell
-        // a completed drop from a cancelled drag, and a late flag would make it
-        // restore the previous panel over the file that was just dropped.
-        model.shelfDidReceiveDrop = true
-
-        for provider in fileProviders {
-            _ = provider.loadObject(ofClass: URL.self) { url, error in
-                if Self.dropProbe {
-                    NSLog("[probe] loaded url=\(url?.path ?? "nil") error=\(error?.localizedDescription ?? "none")")
-                }
-                guard let url, url.isFileURL else { return }
-                DispatchQueue.main.async { shelf.addFiles([url]) }
-            }
-        }
-        return true
     }
 }
 
@@ -523,10 +555,10 @@ struct ShelfRow: View {
                     .frame(width: 14, height: 14)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, IslandMetrics.textInset)
         .frame(height: 30)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: IslandMetrics.rowRadius, style: .continuous)
                 .fill(.white.opacity(hovering ? 0.06 : 0))
         )
         .overlay {
@@ -746,11 +778,14 @@ struct ClipboardPanel: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            if !entries.isEmpty {
-                header
-            }
-            if !clipboard.frequent.isEmpty {
-                chipRow
+            // Clean layout leaves just the list; the controls are in Settings.
+            if !model.cleanLayout {
+                if !entries.isEmpty {
+                    header
+                }
+                if !clipboard.frequent.isEmpty {
+                    chipRow
+                }
             }
 
             if clipboard.visible.isEmpty {
@@ -785,38 +820,56 @@ struct ClipboardPanel: View {
         .frame(height: 24)
     }
 
+    /// The row the keyboard picker is on, when the island was opened from the
+    /// clipboard shortcut.
+    private var pickedIndex: Int? {
+        model.pickerActive ? model.pickerSelection : nil
+    }
+
     private var list: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: 1) {
-                ForEach(clipboard.visible) { entry in
-                    HistoryRow(
-                        symbol: entry.kind.symbol,
-                        text: entry.preview,
-                        monospaced: entry.isMonospaced,
-                        help: "Click to paste · ⌥-click to copy only",
-                        action: { paste(entry) }
-                    ) {
-                        // Ages are recomputed on a timeline rather than only when
-                        // the row is rebuilt, so "3m" cannot sit there for an hour
-                        // on a panel left open. `.everyMinute`, not
-                        // `.periodic(from: .now, ...)`: `.now` is re-evaluated every
-                        // render, which restarts the schedule and pins a core.
-                        TimelineView(.everyMinute) { context in
-                            Text(Age.string(entry.copiedAt, now: context.date))
-                                .font(.system(size: 10))
-                                .foregroundStyle(.white.opacity(0.3))
-                                .help("Copied \(entry.copiedAt.formatted(date: .abbreviated, time: .shortened))")
-                        }
-                    }
-                        .contextMenu {
-                            Button("Copy") { clipboard.write(entry) }
-                            Button("Remove", role: .destructive) { clipboard.remove(entry) }
-                            Divider()
-                            Button("Clear History", role: .destructive) { clipboard.clear() }
-                        }
-                }
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                rows
             }
-            .padding(.bottom, 2)
+            // Follows the selection, scrolling only as far as it takes to show it.
+            .onChange(of: pickedIndex) { _, index in
+                guard let index, clipboard.visible.indices.contains(index) else { return }
+                proxy.scrollTo(clipboard.visible[index].id)
+            }
+        }
+    }
+
+    private var rows: some View {
+        LazyVStack(spacing: 1) {
+            ForEach(Array(clipboard.visible.enumerated()), id: \.element.id) { index, entry in
+                HistoryRow(
+                    symbol: entry.kind.symbol,
+                    text: entry.preview,
+                    monospaced: entry.isMonospaced,
+                    help: "Click to paste · ⌥-click to copy only",
+                    selected: index == pickedIndex,
+                    action: { paste(entry) }
+                ) {
+                    // Ages are recomputed on a timeline rather than only when
+                    // the row is rebuilt, so "3m" cannot sit there for an hour
+                    // on a panel left open. `.everyMinute`, not
+                    // `.periodic(from: .now, ...)`: `.now` is re-evaluated every
+                    // render, which restarts the schedule and pins a core.
+                    TimelineView(.everyMinute) { context in
+                        Text(Age.string(entry.copiedAt, now: context.date))
+                            .font(.system(size: 10))
+                            .foregroundStyle(.white.opacity(0.3))
+                            .help("Copied \(entry.copiedAt.formatted(date: .abbreviated, time: .shortened))")
+                    }
+                }
+                    .contextMenu {
+                        Button("Copy") { clipboard.write(entry) }
+                        Button("Remove", role: .destructive) { clipboard.remove(entry) }
+                        Divider()
+                        Button("Clear History", role: .destructive) { clipboard.clear() }
+                    }
+                    .id(entry.id)
+            }
         }
     }
 
@@ -833,7 +886,7 @@ struct ClipboardPanel: View {
                 ? "Nothing in the last \(clipboard.window.span)"
                 : "Nothing copied yet",
             subtitle: filtered
-                ? "Pick All to see older items"
+                ? (model.cleanLayout ? "Choose All in Settings to see older items" : "Pick All to see older items")
                 : "Copy something and it shows up here"
         )
     }
@@ -868,11 +921,13 @@ struct TerminalPanel: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            if !terminal.entries.isEmpty {
-                header
-            }
-            if !terminal.frequent.isEmpty {
-                chipRow
+            if !model.cleanLayout {
+                if !terminal.entries.isEmpty {
+                    header
+                }
+                if !terminal.frequent.isEmpty {
+                    chipRow
+                }
             }
 
             if terminal.visible.isEmpty {
@@ -934,7 +989,6 @@ struct TerminalPanel: View {
                         }
                 }
             }
-            .padding(.bottom, 2)
         }
     }
 
@@ -943,7 +997,9 @@ struct TerminalPanel: View {
         return PanelEmptyState(
             symbol: filtered ? "line.3.horizontal.decrease" : "terminal",
             title: filtered ? "Nothing in the last \(terminal.window.span)" : "No history yet",
-            subtitle: filtered ? "Pick All to see older commands" : "Run something in a new terminal"
+            subtitle: filtered
+                ? (model.cleanLayout ? "Choose All in Settings to see older commands" : "Pick All to see older commands")
+                : "Run something in a new terminal"
         )
     }
 
@@ -953,6 +1009,126 @@ struct TerminalPanel: View {
     }
 }
 
+
+// MARK: - Open: settings
+
+/// Every setting in one place, so the history panels can drop their controls when
+/// `cleanLayout` is on. Each row is a label with a one-line hint under it, and a
+/// pill picker; the row count and height are `PanelID.settingsRowCount` and
+/// `settingsRowHeight`, which size the panel.
+struct SettingsPanel: View {
+    @ObservedObject var model: IslandModel
+    @ObservedObject var clipboard: ClipboardService
+    @ObservedObject var terminal: TerminalService
+
+    var body: some View {
+        VStack(spacing: 1) {
+            row("Clean layout", hint: "Hides filters and Frequent") {
+                onOff(model.cleanLayout) { model.cleanLayout = $0 }
+            }
+            row(
+                "Autopaste",
+                hint: needsAccessibility ? "Needs Accessibility — click to open" : "Click pastes; ⌥-click copies",
+                warning: needsAccessibility,
+                hintAction: needsAccessibility ? AccessibilityPaster.openSettings : nil
+            ) {
+                onOff(model.autoPasteEnabled) { model.autoPasteEnabled = $0 }
+            }
+            row(
+                "Clipboard shortcut",
+                hint: model.clipboardShortcutAvailable ? "Opens the clipboard anywhere" : "In use by another app",
+                warning: !model.clipboardShortcutAvailable
+            ) {
+                PillPicker(
+                    options: ClipboardShortcut.allCases.map(Optional.some) + [nil],
+                    selection: model.clipboardShortcut,
+                    size: .regular,
+                    label: { $0?.title ?? "Off" },
+                    select: { model.clipboardShortcut = $0 }
+                )
+            }
+            row("Clipboard history", hint: "How far back the list goes") {
+                windowPicker(clipboard.window) { clipboard.window = $0 }
+            }
+            row("Terminal history", hint: "How far back the list goes") {
+                windowPicker(terminal.window) { terminal.window = $0 }
+            }
+            row("Opens on", hint: "Where hover lands") {
+                // nil is "Last used".
+                PillPicker(
+                    options: [nil] + PanelID.contentPanels.map(Optional.some),
+                    selection: model.reopensLastPanel ? nil : model.defaultPanel,
+                    size: .regular,
+                    label: { $0?.title ?? "Last used" },
+                    select: { choice in
+                        if let choice {
+                            model.defaultPanel = choice
+                            model.reopensLastPanel = false
+                        } else {
+                            model.reopensLastPanel = true
+                        }
+                    }
+                )
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var needsAccessibility: Bool { model.pastePermissionNotice != nil }
+
+    private func onOff(_ value: Bool, select: @escaping (Bool) -> Void) -> some View {
+        PillPicker(
+            options: [false, true],
+            selection: value,
+            size: .regular,
+            label: { $0 ? "On" : "Off" },
+            select: select
+        )
+    }
+
+    private func windowPicker(_ window: HistoryWindow, select: @escaping (HistoryWindow) -> Void) -> some View {
+        PillPicker(
+            options: HistoryWindow.allCases,
+            selection: window,
+            size: .regular,
+            label: { $0.label },
+            help: { $0.title },
+            select: select
+        )
+    }
+
+    /// Label and hint on the panels' text edge, the control's last label on the
+    /// right-hand one.
+    private func row<Control: View>(
+        _ title: String,
+        hint: String,
+        warning: Bool = false,
+        hintAction: (() -> Void)? = nil,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.88))
+                Text(hint)
+                    .font(.system(size: 10))
+                    .foregroundStyle(warning ? .orange.opacity(0.85) : .white.opacity(0.35))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .contentShape(Rectangle())
+                    .onTapGesture { hintAction?() }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            control()
+                .layoutPriority(1)
+        }
+        .padding(.leading, IslandMetrics.textInset)
+        .padding(.trailing, IslandMetrics.textInset - PillSize.regular.padding)
+        .frame(height: PanelID.settingsRowHeight)
+    }
+}
 
 // MARK: - Open: music
 
@@ -968,10 +1144,12 @@ struct MusicPanel: View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
 
-            HStack(alignment: .top, spacing: 16) {
-                ArtworkView(image: track?.artwork, size: tile, radius: 20, shadow: true)
+            HStack(alignment: .top, spacing: IslandMetrics.panelPadding) {
+                // Sits in the body's bottom-left corner, so its radius is the
+                // concentric one rather than its own choice.
+                ArtworkView(image: track?.artwork, size: tile, radius: IslandMetrics.innerRadius, shadow: true)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 0) {
                     MarqueeText(
                         text: track?.title ?? "Nothing Playing",
                         width: textColumnWidth,
@@ -986,12 +1164,17 @@ struct MusicPanel: View {
                         .foregroundStyle(.white.opacity(0.5))
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .padding(.top, 3)
 
                     Spacer(minLength: 0)
 
                     progress
 
-                    Spacer(minLength: 0)
+                    // The controls end on the artwork's bottom edge, which is one
+                    // panel padding above the island's. This gap is that same
+                    // padding, so they sit midway between the time labels and the
+                    // island's edge.
+                    Color.clear.frame(height: Self.transportGap)
 
                     transport
                 }
@@ -1003,13 +1186,19 @@ struct MusicPanel: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
     }
 
-    /// Panel width minus the shell inset (24 each side), the panel inset (8 each
-    /// side), the artwork and the gap beside it.
+    /// The panel padding, less the 3 pt of empty line under the digits of the 10 pt
+    /// time labels, so the gap measures the same above the controls as below them.
+    static let transportGap: CGFloat = IslandMetrics.panelPadding - 3
+
+    /// Panel width minus the body inset and the panel padding on each side, the
+    /// artwork, and the gap beside it.
     private var textColumnWidth: CGFloat {
-        MusicLayout.panelWidth - 48 - 16 - tile.width - 16
+        MusicLayout.panelWidth
+            - 2 * (IslandMetrics.openInset + IslandMetrics.panelPadding)
+            - tile.width
+            - IslandMetrics.panelPadding
     }
 
     private var subtitle: String {
@@ -1022,18 +1211,18 @@ struct MusicPanel: View {
     private var transport: some View {
         // Centred across the text column rather than pushed to its right edge:
         // right-aligned left the block floating in the corner of a panel this tall.
-        HStack(spacing: 16) {
+        HStack(spacing: 20) {
             Spacer(minLength: 0)
-            TransportButton(symbol: "backward.fill", size: 13) { model.player.previous() }
+            TransportButton(symbol: "backward.fill", size: 17) { model.player.previous() }
             TransportButton(
                 symbol: track?.isPlaying == true ? "pause.fill" : "play.fill",
-                size: 12,
+                size: 15,
                 prominent: true
             ) { model.player.toggle() }
-            TransportButton(symbol: "forward.fill", size: 13) { model.player.next() }
+            TransportButton(symbol: "forward.fill", size: 17) { model.player.next() }
             Spacer(minLength: 0)
         }
-        .frame(height: 28)
+        .frame(height: TransportButton.height)
     }
 
     @ViewBuilder
@@ -1057,6 +1246,9 @@ struct TransportButton: View {
     var prominent = false
     let action: () -> Void
 
+    /// The play/pause circle's diameter, and the row's height.
+    static let height: CGFloat = 36
+
     var body: some View {
         Button(action: action) {
             if prominent {
@@ -1068,12 +1260,12 @@ struct TransportButton: View {
                         .font(.system(size: size, weight: .bold))
                         .foregroundStyle(.black.opacity(0.85))
                 }
-                .frame(width: 28, height: 28)
+                .frame(width: Self.height, height: Self.height)
             } else {
                 Image(systemName: symbol)
                     .font(.system(size: size, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.75))
-                    .frame(width: 22, height: 28)
+                    .frame(width: 30, height: Self.height)
                     .contentShape(Rectangle())
             }
         }
@@ -1280,10 +1472,10 @@ struct PasteToastView: View {
         .padding(.horizontal, 12)
         .frame(height: IslandModel.toastHeight)
         .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: IslandMetrics.rowRadius, style: .continuous)
                 .fill(.black.opacity(0.92))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    RoundedRectangle(cornerRadius: IslandMetrics.rowRadius, style: .continuous)
                         .strokeBorder(.white.opacity(0.12), lineWidth: 0.5)
                 )
         )
@@ -1298,28 +1490,47 @@ struct PasteToastView: View {
 /// visible on purpose — this one is attached to the notch, which is where the island
 /// lives, and it is the only one that can sit inside the cutout's own band. It is
 /// affordable because `CoreAnimationEqualizer` runs on the window server.
+///
+/// Symmetric by construction: each wing is a square as tall as the band (see
+/// `IslandModel.islandSize`), and the artwork and the indicator each sit centred
+/// in a same-sized slot inside one. So both get the same padding above, below,
+/// towards the outer edge and towards the cutout, and the artwork's corners are
+/// concentric with the island's.
 struct WingContent: View {
     @ObservedObject var model: IslandModel
+
+    private var slot: CGFloat { IslandMetrics.wingArtwork }
+
+    /// The gap around a slot on every side.
+    private var padding: CGFloat { max((model.notchSize.height - slot) / 2, 0) }
+
+    private var edge: CGFloat { IslandMetrics.closedInset + padding }
 
     var body: some View {
         HStack(spacing: 0) {
             if let track = model.nowPlaying {
-                ArtworkView(image: track.artwork, size: 20, radius: 4)
-                    .padding(.leading, 6)
+                ArtworkView(
+                    image: track.artwork,
+                    size: slot,
+                    radius: max(IslandMetrics.closedBottomRadius - padding, 4)
+                )
+                .padding(.leading, edge)
             }
 
             Spacer(minLength: 0)
 
-            if model.nowPlaying?.isPlaying == true {
-                CoreAnimationEqualizer()
-                    .frame(width: 11.5, height: 12)
-                    .padding(.trailing, 8)
-            } else if model.nowPlaying != nil {
-                Image(systemName: "pause.fill")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .padding(.trailing, 10)
+            Group {
+                if model.nowPlaying?.isPlaying == true {
+                    CoreAnimationEqualizer()
+                        .frame(width: 11.5, height: 12)
+                } else if model.nowPlaying != nil {
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
             }
+            .frame(width: slot, height: slot)
+            .padding(.trailing, edge)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

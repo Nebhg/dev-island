@@ -12,16 +12,54 @@ final class IslandModel: ObservableObject {
     @Published var nowPlaying: NowPlaying?
     @Published var notchSize = CGSize(width: 185, height: 32)
 
-    /// Which panel the island is showing. Resets to `defaultPanel` each time it
-    /// opens, so the island always lands where it was configured to.
+    /// Which panel the island is showing. Each open selects `panelOnOpen`: this
+    /// same panel when `reopensLastPanel` is on, `defaultPanel` otherwise.
+    /// Persisted, so the last panel also survives a relaunch.
     @Published var activePanel = PanelID.music {
-        didSet { onGeometryChange?() }
+        didSet {
+            onGeometryChange?()
+            // Settings is a detour, never the panel to come back to.
+            guard activePanel != .settings else { return }
+            lastContentPanel = activePanel
+            // Previews build throwaway models; they must not overwrite the
+            // user's real last panel.
+            if !PreviewMode.active {
+                UserDefaults.standard.set(activePanel.rawValue, forKey: Self.lastPanelKey)
+            }
+        }
     }
 
-    /// The panel opened on hover. Persisted.
+    /// The last panel that was not Settings; what closing on Settings goes back to.
+    private var lastContentPanel = PanelID.clipboard
+
+    /// Hides the per-panel controls — the history windows and the Autopaste pill —
+    /// and the Frequent row, leaving each history panel as just its list. The
+    /// controls live in the Settings panel either way. Persisted; off by default.
+    @Published var cleanLayout: Bool {
+        didSet { UserDefaults.standard.set(cleanLayout, forKey: Self.cleanLayoutKey) }
+    }
+
+    private static let cleanLayoutKey = "cleanLayout"
+
+    /// Whether the clipboard shortcut could be registered — false when another app
+    /// already holds the combination. Set by the controller; shown in Settings and
+    /// the menu.
+    @Published var clipboardShortcutAvailable = true
+
+    /// The panel opened on hover when `reopensLastPanel` is off. Persisted.
     @Published var defaultPanel: PanelID {
         didSet { UserDefaults.standard.set(defaultPanel.rawValue, forKey: Self.defaultPanelKey) }
     }
+
+    /// Reopen on whichever panel was showing when the island closed, instead of
+    /// always landing on `defaultPanel`. Persisted; on unless a fixed default
+    /// panel is picked from the menu bar.
+    @Published var reopensLastPanel: Bool {
+        didSet { UserDefaults.standard.set(reopensLastPanel, forKey: Self.reopensLastPanelKey) }
+    }
+
+    /// What `expand()` is about to show.
+    var panelOnOpen: PanelID { reopensLastPanel ? activePanel : defaultPanel }
 
     /// Set by a provider when its panel is degraded — e.g. terminal history
     /// needing `setopt INC_APPEND_HISTORY`. Rendered as a strip above content.
@@ -75,6 +113,8 @@ final class IslandModel: ObservableObject {
     var onGeometryChange: (() -> Void)?
 
     private static let defaultPanelKey = "defaultPanel"
+    private static let lastPanelKey = "lastPanel"
+    private static let reopensLastPanelKey = "reopensLastPanel"
 
     /// Set by the screenshot/launch flag so the island does not close while
     /// the pointer is elsewhere.
@@ -97,9 +137,86 @@ final class IslandModel: ObservableObject {
     let terminal: TerminalService
     let shelf = ShelfStore()
 
-    /// Set by the shelf panel when a drop lands, so the controller can tell a
-    /// completed drop from a cancelled drag and put the previous panel back.
+    /// Set when a drop lands, so the controller can tell a completed drop from a
+    /// cancelled drag and put the previous panel back.
     var shelfDidReceiveDrop = false
+
+    /// True while a file the island would take is over it. Drawn by the shelf.
+    @Published var fileDropTargeted = false
+
+    /// Files let go of anywhere on the island. Synchronous, so the flag is set
+    /// before the controller's mouse-up check runs.
+    func receiveFiles(_ urls: [URL]) {
+        shelfDidReceiveDrop = true
+        selectPanel(.shelf)
+        _ = shelf.addFiles(urls)
+    }
+
+    // MARK: - Keyboard picker
+
+    /// The global shortcut that opens the clipboard picker; nil when switched off.
+    /// Persisted.
+    @Published var clipboardShortcut: ClipboardShortcut? {
+        didSet {
+            UserDefaults.standard.set(clipboardShortcut?.rawValue ?? Self.shortcutOff, forKey: Self.clipboardShortcutKey)
+        }
+    }
+
+    private static let clipboardShortcutKey = "clipboardShortcut"
+    private static let shortcutOff = "off"
+
+    /// True while the island was opened from the clipboard shortcut. It then stays
+    /// open without the pointer and the arrow keys drive it, like Windows' ⊞V,
+    /// until something is pasted, it is dismissed, or focus moves to another app.
+    @Published private(set) var pickerActive = false
+
+    /// Index into `clipboard.visible`.
+    @Published private(set) var pickerSelection = 0
+
+    /// What to put back when the picker closes. The shortcut is a detour, not a
+    /// choice of panel, so it must not become the panel hover reopens on.
+    private var panelBeforePicker: PanelID?
+
+    func openPicker() {
+        guard !suppressed else { return }
+        if !pickerActive {
+            panelBeforePicker = activePanel
+        }
+        pickerSelection = 0
+        pickerActive = true
+        if expanded {
+            selectPanel(.clipboard)
+        } else {
+            activePanel = .clipboard
+            expanded = true
+        }
+    }
+
+    /// Only while the clipboard is showing: the keys mean nothing on other panels.
+    func movePickerSelection(by step: Int) {
+        guard activePanel == .clipboard else { return }
+        let count = clipboard.visible.count
+        guard count > 0 else { return }
+        pickerSelection = min(max(pickerSelection + step, 0), count - 1)
+    }
+
+    func pastePickerSelection(copyOnly: Bool) {
+        guard activePanel == .clipboard else { return }
+        let entries = clipboard.visible
+        guard entries.indices.contains(pickerSelection) else { return }
+        pasteClipboard(entries[pickerSelection], autoPaste: !copyOnly)
+    }
+
+    private func endPicker() {
+        guard pickerActive else { return }
+        pickerActive = false
+        // Only if the user stayed on the clipboard; clicking another panel during
+        // the picker is a real choice.
+        if let previous = panelBeforePicker, activePanel == .clipboard {
+            activePanel = previous
+        }
+        panelBeforePicker = nil
+    }
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -109,10 +226,25 @@ final class IslandModel: ObservableObject {
         // default rather than a choice, so migrate it instead of leaving existing
         // installs on a panel the user never picked.
         let chosen = stored.flatMap(PanelID.init(rawValue:))
-        let initial = (chosen == .music ? PanelID.clipboard : chosen) ?? .clipboard
+        let initial = (chosen == .music || chosen == .settings ? PanelID.clipboard : chosen) ?? .clipboard
         self.defaultPanel = initial
-        self.activePanel = initial
+        let reopens = UserDefaults.standard.object(forKey: Self.reopensLastPanelKey) as? Bool ?? true
+        self.reopensLastPanel = reopens
+        // Unlike the default, a stored "music" here is a real choice: it is
+        // whatever was showing last.
+        let last = UserDefaults.standard.string(forKey: Self.lastPanelKey)
+            .flatMap(PanelID.init(rawValue:))
+            .flatMap { $0 == .settings ? nil : $0 }
+        let opening = reopens ? (last ?? initial) : initial
+        self.activePanel = opening
+        self.lastContentPanel = opening
+        self.cleanLayout = UserDefaults.standard.bool(forKey: Self.cleanLayoutKey)
         self.autoPasteEnabled = UserDefaults.standard.object(forKey: Self.autoPasteKey) as? Bool ?? true
+        switch UserDefaults.standard.string(forKey: Self.clipboardShortcutKey) {
+        case nil: self.clipboardShortcut = .shiftCommandV
+        case Self.shortcutOff: self.clipboardShortcut = nil
+        case let stored?: self.clipboardShortcut = ClipboardShortcut(rawValue: stored) ?? .shiftCommandV
+        }
         self.terminal = TerminalService(rules: ignoreRules)
 
         player.$nowPlaying
@@ -146,28 +278,44 @@ final class IslandModel: ObservableObject {
     /// Expanded: a black panel flush with the top edge, NotchNook style.
     var islandSize: CGSize {
         if expanded {
-            // The shelf is the one panel whose height follows its contents.
-            if activePanel == .shelf {
+            switch activePanel {
+            case .shelf:
+                // The one panel whose height follows its contents.
                 return CGSize(
                     width: activePanel.preferredSize.width,
                     height: PanelID.shelfHeight(forItems: shelf.items.count, notchHeight: notchSize.height)
                 )
+            case .music:
+                // Grows with the notch, so a taller menu bar does not eat the
+                // padding under the artwork.
+                return CGSize(
+                    width: MusicLayout.panelWidth,
+                    height: MusicLayout.panelHeight(notchHeight: notchSize.height)
+                )
+            case .settings:
+                return CGSize(
+                    width: activePanel.preferredSize.width,
+                    height: PanelID.settingsHeight(notchHeight: notchSize.height)
+                )
+            case .clipboard, .terminal:
+                return activePanel.preferredSize
             }
-            return activePanel.preferredSize
         }
-        // BoringNotch's "chin": the closed notch is 2pt wider than the cutout and
-        // grows by 2*(height-12)+20 while music plays, showing artwork and a
-        // waveform.
+        // Idle, the closed notch is 2pt wider than the cutout. While music plays it
+        // grows a wing either side: each a square as tall as the band, so the
+        // artwork and the equaliser get the same padding on every side (see
+        // `WingContent`), plus the body's inset from the window.
         //
         // macOS draws its own now-playing live activity further along the menu bar,
         // so both are visible — accepted deliberately: ours sits at the notch, where
         // the island is, and the system's is somewhere else entirely. Ours used to
         // cost 3.8% of a core while it animated; the equaliser is Core Animation
         // now, which the window server interpolates, so it costs nothing.
-        let base = notchSize.width + 4
         let playing = nowPlaying?.isPlaying == true
-        let chin = playing ? (2 * max(0, notchSize.height - 12) + 20) : 0
-        return CGSize(width: base + chin, height: notchSize.height)
+        let width = playing
+            ? notchSize.width + 2 * notchSize.height + 2 * IslandMetrics.closedInset
+            : notchSize.width + 4
+        return CGSize(width: width, height: notchSize.height)
     }
 
     /// What the window has to be. Normally the island; while a toast is up the
@@ -193,13 +341,17 @@ final class IslandModel: ObservableObject {
 
     func expand() {
         guard !expanded, !suppressed else { return }
-        activePanel = defaultPanel
+        activePanel = panelOnOpen
         expanded = true
     }
 
     func collapse() {
         guard expanded else { return }
         expanded = false
+        endPicker()
+        if activePanel == .settings {
+            activePanel = lastContentPanel
+        }
     }
 
     func toggleExpanded() {

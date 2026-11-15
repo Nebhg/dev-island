@@ -11,7 +11,14 @@ final class IslandController {
     private let panel: IslandPanel
     private let model: IslandModel
     private let host: NSHostingView<IslandRootView>
+    /// The window's content view, with `host` inside it: the drop target for the
+    /// whole island.
+    private let dropView: FileDropView
     private let panelHost: PanelHost
+
+    /// Whether the clipboard shortcut is actually registered — false when another
+    /// app already holds that combination. Shown in the menu.
+    var clipboardShortcutAvailable: Bool { model.clipboardShortcutAvailable }
 
     private var globalMonitor: Any?
     private var localMonitor: Any?
@@ -48,6 +55,15 @@ final class IslandController {
     /// drag can put it back. Only meaningful while `dragOpenedShelf` is true.
     private var panelBeforeDrag: PanelID?
     private var dragOpenedShelf = false
+
+    /// The last press landed on the open island — possibly a shelf row about to be
+    /// dragged out.
+    private var dragBeganOnIsland = false
+
+    /// A file was released over the open shelf and has not been accounted for yet:
+    /// either `FileDropView` takes the drop, or the safety net in
+    /// `restorePanelIfDragWasCancelled` reads it from the drag pasteboard.
+    private var awaitingReleasedFiles = false
     private let hotKeys = HotKeys()
 
     /// `ISLAND_DRAG_PROBE=1` logs every dragged event with both gate signals, so
@@ -76,6 +92,7 @@ final class IslandController {
         self.model = model
         self.panelHost = PanelHost(model: model)
         self.host = NSHostingView(rootView: IslandRootView(model: model))
+        self.dropView = FileDropView(frame: NSRect(origin: .zero, size: model.islandSize))
         self.panel = IslandPanel(
             contentRect: NSRect(origin: .zero, size: model.islandSize),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -85,9 +102,10 @@ final class IslandController {
 
         host.translatesAutoresizingMaskIntoConstraints = true
         host.autoresizingMask = [.width, .height]
-        host.frame = NSRect(origin: .zero, size: model.islandSize)
+        host.frame = dropView.bounds
+        dropView.addSubview(host)
 
-        panel.contentView = host
+        panel.contentView = dropView
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -113,6 +131,15 @@ final class IslandController {
         hotKeys.onCycle = { [weak self] step in
             self?.model.cyclePanel(by: step)
         }
+        hotKeys.onPicker = { [weak self] in self?.togglePicker() }
+        hotKeys.onPickerKey = { [weak self] key in self?.handlePickerKey(key) }
+
+        dropView.canAccept = { [weak model] in model?.expanded == true }
+        dropView.onTargetChange = { [weak model] targeted in
+            guard let model, model.fileDropTargeted != targeted else { return }
+            model.fileDropTargeted = targeted
+        }
+        dropView.onDrop = { [weak model] urls in model?.receiveFiles(urls) }
 
         updateGeometry()
         installMonitors()
@@ -125,6 +152,12 @@ final class IslandController {
             queue: .main
         ) { [weak self] note in
             guard let self else { return }
+            // Focus moving to another app ends the picker: its arrow and Return
+            // keys are global while it is open, and must not follow the user
+            // somewhere they did not expect them taken.
+            if self.model.pickerActive {
+                self.model.collapse()
+            }
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             guard app?.bundleIdentifier == "com.apple.campo" else { return }
             self.hideForSpotlight()
@@ -184,9 +217,32 @@ final class IslandController {
             }
             .store(in: &cancellables)
 
-        // The chin appearing or disappearing changes the closed window's size as
-        // well as what it covers, so the frame and the click-through policy both
-        // have to follow it.
+        // The picker's keys are global while registered, so they follow its state
+        // directly — no hop to the next run loop turn that could leave them live
+        // after the picker has gone.
+        model.$pickerActive
+            .removeDuplicates()
+            .sink { [weak self] active in
+                if active {
+                    self?.hotKeys.installPickerKeys()
+                } else {
+                    self?.hotKeys.uninstallPickerKeys()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Emits the stored value on subscribe, which is what registers the shortcut
+        // at launch.
+        model.$clipboardShortcut
+            .sink { [weak self] shortcut in
+                guard let self else { return }
+                let available = self.hotKeys.setClipboardShortcut(shortcut)
+                if self.model.clipboardShortcutAvailable != available {
+                    self.model.clipboardShortcutAvailable = available
+                }
+            }
+            .store(in: &cancellables)
+
         // `@Published` does not replay, so an island opened by a launch flag never
         // produced the `$expanded` event and therefore never started polling. That
         // is exactly what a screenshot session wants to look like, and it made the
@@ -240,6 +296,57 @@ final class IslandController {
     var defaultPanel: PanelID {
         get { model.defaultPanel }
         set { model.defaultPanel = newValue }
+    }
+
+    /// The submenu's "Last Used" entry.
+    var reopensLastPanel: Bool {
+        get { model.reopensLastPanel }
+        set { model.reopensLastPanel = newValue }
+    }
+
+    /// Exposed for the status item's "Clipboard Shortcut" submenu.
+    var clipboardShortcut: ClipboardShortcut? {
+        get { model.clipboardShortcut }
+        set { model.clipboardShortcut = newValue }
+    }
+
+    /// Exposed for the status item's "Clean Layout" item.
+    var cleanLayout: Bool {
+        get { model.cleanLayout }
+        set { model.cleanLayout = newValue }
+    }
+
+    // MARK: - Clipboard picker
+
+    /// The clipboard shortcut: opens the island on the clipboard, or closes it if
+    /// the picker is already up.
+    private func togglePicker() {
+        if model.pickerActive, model.expanded {
+            model.collapse()
+            return
+        }
+        // Hover re-arms the island on the next mouse move once Spotlight has gone;
+        // a keypress is as good a sign that it has.
+        if model.suppressed {
+            guard !SpotlightState.isOpen else { return }
+            model.suppressed = false
+        }
+        if !panel.isVisible {
+            FullscreenSupport.attach(panel)
+            panel.orderFrontRegardless()
+        }
+        model.openPicker()
+        refreshMousePolicy()
+    }
+
+    private func handlePickerKey(_ key: HotKeys.PickerKey) {
+        switch key {
+        case .up: model.movePickerSelection(by: -1)
+        case .down: model.movePickerSelection(by: 1)
+        case .paste: model.pastePickerSelection(copyOnly: false)
+        case .copy: model.pastePickerSelection(copyOnly: true)
+        case .close: model.collapse()
+        }
     }
 
     /// Ends the media helper process. Called on normal termination; see
@@ -346,7 +453,8 @@ final class IslandController {
     private func applyWindowSize(_ size: CGSize, on screen: NSScreen) {
         if size != windowSize {
             windowSize = size
-            host.frame = NSRect(origin: .zero, size: size)
+            // The host follows through its autoresizing mask.
+            dropView.frame = NSRect(origin: .zero, size: size)
         }
 
         let frame = islandFrame(for: size, on: screen)
@@ -383,6 +491,26 @@ final class IslandController {
     /// pointer does not fall out of the island on the way down.
     private func inHotZone(_ point: CGPoint) -> Bool {
         islandRect.insetBy(dx: -8, dy: -4).contains(point)
+    }
+
+    /// How far a dragged file reaches. Hover needs the pointer on the notch; a
+    /// file on its way to the shelf opens it from this far out, and keeps it open
+    /// while it is anywhere near — so the drop target is already there when the
+    /// file arrives, instead of appearing only once it is inside the cutout.
+    private static let dragReach: CGFloat = 100
+
+    /// The shelf's footprint plus `dragReach` around it, hanging from the top
+    /// edge — or the island's, if it is already open and larger.
+    private var dragZone: CGRect {
+        guard let screen = targetScreen() else { return .zero }
+        let width = max(PanelID.shelf.preferredSize.width, islandRect.width) + 2 * Self.dragReach
+        let height = max(model.notchSize.height, islandRect.height) + Self.dragReach
+        return CGRect(
+            x: screen.frame.midX - width / 2,
+            y: screen.frame.maxY - height,
+            width: width,
+            height: height
+        )
     }
 
     /// Open, the panel owns every click inside it. Closed and idle, the window is
@@ -451,10 +579,22 @@ final class IslandController {
             // Snapshot before the drag begins: the payload is written to the drag
             // pasteboard after this point, so a changed count means content.
             dragCountAtMouseDown = NSPasteboard(name: .drag).changeCount
+            // A press on the open island may become a shelf row being dragged out,
+            // which must not be caught on the way back in.
+            dragBeganOnIsland = model.expanded && islandRect.contains(NSEvent.mouseLocation)
 
         case .leftMouseUp:
             dragCountAtMouseDown = -1
             model.isInteracting = false
+            // A file let go of over the open shelf. The drop normally reaches
+            // `FileDropView`; `restorePanelIfDragWasCancelled` checks whether it did.
+            awaitingReleasedFiles = dragOpenedShelf
+                && !dragBeganOnIsland
+                && model.expanded
+                && islandRect.contains(NSEvent.mouseLocation)
+            if Self.dragProbe, dragOpenedShelf {
+                NSLog("[probe] released overIsland=\(awaitingReleasedFiles) beganOnIsland=\(dragBeganOnIsland) expanded=\(model.expanded)")
+            }
             restorePanelIfDragWasCancelled()
 
         case .leftMouseDragged:
@@ -475,7 +615,8 @@ final class IslandController {
             //
             // Only queried after a drag was actually seen. Touching the pasteboard
             // on every mouse move would be an IPC round trip at pointer rate.
-            if dragPasteboardDirty {
+            // Not while a released file is still to be read from it.
+            if dragPasteboardDirty, !awaitingReleasedFiles {
                 NSPasteboard(name: .drag).clearContents()
                 dragPasteboardDirty = false
             }
@@ -487,6 +628,12 @@ final class IslandController {
 
         let point = NSEvent.mouseLocation
         var inside = inHotZone(point)
+
+        // A dragged event only gets this far carrying a file — the switch above
+        // returned for the rest — and a file counts from further out.
+        if event.type == .leftMouseDragged, dragZone.contains(point) {
+            inside = true
+        }
 
         // A recent shrink may have lifted the island's bottom edge above the
         // pointer. Keep counting the old area as inside until the pointer leaves
@@ -509,10 +656,13 @@ final class IslandController {
             if !dragOpenedShelf {
                 dragOpenedShelf = true
                 // Remember what the user would have been looking at. If the island
-                // is closed, that is the default panel, because `expand()` is about
-                // to select it.
-                panelBeforeDrag = model.expanded ? model.activePanel : model.defaultPanel
+                // is closed, that is `panelOnOpen`, because `expand()` is about to
+                // select it.
+                panelBeforeDrag = model.expanded ? model.activePanel : model.panelOnOpen
                 model.shelfDidReceiveDrop = false
+                if Self.dragProbe {
+                    NSLog("[probe] file drag reached the island zone; expanded=\(model.expanded) beganOnIsland=\(dragBeganOnIsland)")
+                }
             }
         }
 
@@ -542,7 +692,7 @@ final class IslandController {
             }
             model.expand()
 
-            // Must come after expand(): expand() resets activePanel to defaultPanel,
+            // Must come after expand(): expand() sets activePanel to panelOnOpen,
             // which silently undid selecting the shelf during a drag — so the shelf
             // was never on screen to receive the drop.
             if dragOpenedShelf {
@@ -561,10 +711,31 @@ final class IslandController {
     /// the user never asked for it. The delay lets the drop handler run first: item
     /// loading is asynchronous, so the flag is not set the instant the button comes
     /// up.
+    ///
+    /// It is also the safety net for a file released over the open shelf whose drop
+    /// never reached `FileDropView`. The hover monitor sees every drag, and the
+    /// drag pasteboard still holds the files after the button comes up, so they are
+    /// read from there — the shelf only records a reference, so there is no file
+    /// operation the drop would have had to perform. Read here, after the source
+    /// has finished, rather than on mouse-up while it may still be busy with the
+    /// drop; `awaitingReleasedFiles` keeps the stale-pasteboard clear off it until
+    /// then.
     private func restorePanelIfDragWasCancelled() {
         guard dragOpenedShelf else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self else { return }
+            if self.awaitingReleasedFiles {
+                self.awaitingReleasedFiles = false
+                if self.model.shelfDidReceiveDrop {
+                    if Self.dragProbe { NSLog("[probe] drop arrived through FileDropView; safety net not needed") }
+                } else {
+                    let urls = FileDropView.fileURLs(on: NSPasteboard(name: .drag))
+                    if Self.dragProbe { NSLog("[probe] no drop arrived; safety net read \(urls.count) file(s) from the drag pasteboard") }
+                    if !urls.isEmpty {
+                        self.model.receiveFiles(urls)
+                    }
+                }
+            }
             let dropped = self.model.shelfDidReceiveDrop
             let previous = self.panelBeforeDrag
             self.dragOpenedShelf = false
@@ -597,9 +768,12 @@ final class IslandController {
     private func scheduleCollapse() {
         collapseWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
+            // The picker is driven from the keyboard; the pointer being elsewhere is
+            // the normal case, not a reason to close.
             guard let self,
                   !self.model.locksOpen,
                   !self.model.isInteracting,
+                  !self.model.pickerActive,
                   !self.inHotZone(NSEvent.mouseLocation)
             else { return }
             self.model.collapse()
