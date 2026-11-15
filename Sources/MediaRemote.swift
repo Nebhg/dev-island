@@ -34,6 +34,37 @@ struct NowPlaying: Equatable {
             && lhs.artwork === rhs.artwork
             && abs(lhs.timestamp.timeIntervalSince(rhs.timestamp)) < 0.5
     }
+
+    /// Carries the current artwork forward when a refresh of the **same** track
+    /// arrives without it.
+    ///
+    /// Artwork is not delivered atomically with the rest of the metadata.
+    /// `kMRMediaRemoteNowPlayingInfoArtworkData` is populated by the playing app
+    /// some time after the title and duration, and the community wrapper around
+    /// this framework is explicit that it "often takes a bit of time to load and
+    /// may not appear in the output in all cases — poll regularly to ensure you
+    /// get the artwork data eventually".
+    ///
+    /// Replacing the published track on every poll therefore threw the image away
+    /// each time a poll came back without it: a thumbnail that blinks out and
+    /// back, and for a browser slow to publish it, missing most of the time. That
+    /// is the whole reason YouTube thumbnails would not have shown reliably — there
+    /// is no artwork *URL* key to fetch from, so the only lever is not to drop what
+    /// we are given.
+    ///
+    /// Same track means title **and** artist. Matching on title alone would let a
+    /// different video inherit the previous thumbnail, which is worse than a gap.
+    func carryingArtwork(from current: NowPlaying?) -> NowPlaying {
+        guard artwork == nil,
+              let current,
+              current.title == title,
+              current.artist == artist
+        else { return self }
+
+        var merged = self
+        merged.artwork = current.artwork
+        return merged
+    }
 }
 
 /// Thin bridge over Apple's private MediaRemote framework. Works for every

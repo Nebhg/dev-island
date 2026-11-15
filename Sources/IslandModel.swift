@@ -254,7 +254,11 @@ final class PlayerService: ObservableObject {
                 guard let self else { return }
                 if let track {
                     self.spotifyIsSource = false
-                    self.nowPlaying = track
+                    // Same carry rule as `useMediaRemote`: this is the path that
+                    // runs when Spotify is open but paused, which is the case where
+                    // a browser is playing — the one most likely to publish its
+                    // artwork late.
+                    self.nowPlaying = track.carryingArtwork(from: self.nowPlaying)
                 } else if let snapshot {
                     self.apply(snapshot)
                 } else {
@@ -267,8 +271,11 @@ final class PlayerService: ObservableObject {
 
     private func useMediaRemote() {
         remote.fetch { [weak self] track in
-            self?.spotifyIsSource = false
-            self?.nowPlaying = track
+            guard let self else { return }
+            self.spotifyIsSource = false
+            // Keep the artwork when this is a re-poll of the same track and the
+            // image has not come through yet — see `carryingArtwork(from:)`.
+            self.nowPlaying = track?.carryingArtwork(from: self.nowPlaying)
         }
     }
 

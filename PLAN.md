@@ -1,14 +1,15 @@
 # Dev Island — multi-panel plan
 
-Status: **Phases 0–5.5 implemented; Phase 6 proposed.** Phase 0 is *partial* — the
-YouTube/Chrome test and the paste-notice check were never run. §1 states facts
-verified against the source; rows marked *(Phase 1/2/3/4)* describe the code as it
-now stands, not the original commit. §11 records the signing setup that is in
-place.
+Status: **Phases 1–5.6 implemented and verified by use; 0a/0b not run; 7–8
+pending.** Phase 0 is the only gap that can change the design — the
+YouTube/Chrome test can delete Phase 6, and 0b is a macOS behaviour nobody has
+checked. §1 states facts verified against the source; §13 tracks the code review.
+§11 records the signing setup that is in place.
 
 | Phase | State |
 | --- | --- |
-| 0 — YouTube/Chrome, paste notice | **partial**, untested |
+| 0a — YouTube/Chrome media | not run (**next**) |
+| 0b — macOS pasteboard read banner | not run |
 | 1 — panel host | done |
 | 1.5 — rename + self-signed signing | done |
 | 2 — clipboard panel + auto-paste | done, verified by use |
@@ -16,11 +17,15 @@ place.
 | 4 — file shelf | **done, verified by use** |
 | 5 — music visual upgrade | done |
 | 5.5 — strip removed, per-panel sizes, resize rework | done |
-| 6 — browser-media fallback | only if Phase 0 demands it |
+| 5.6 — history windows, `EXTENDED_HISTORY`, sandbox | done, verified against invented data |
+| 6 — browser-media fallback | only if 0a fails (§7) |
+| 7 — paste confirmation | pending |
+| 8 — view dedup (review 1B) | pending |
 
 Goal: turn a single-purpose music notch into a panel host with a clipboard
 history panel, a terminal-history panel, and a file shelf, plus a visual
-upgrade to the music panel and browser-media support.
+upgrade to the music panel. Browser media is **not** assumed any more: §7 shows
+the current transport cannot see it.
 
 ---
 
@@ -319,6 +324,39 @@ click row
   editor.
 - ⌥-click = copy only, no keystroke. Plain click = copy + paste.
 
+### Paste confirmation (planned — Phase 7)
+
+Auto-paste works but is **invisible**: the island collapses, ⌘V fires, and the
+only evidence is that text appears in the app you were already looking at. Click a
+row and nothing acknowledges it, so it reads as "did that do anything?" —
+especially on ⌥-click, where copy-only is deliberate and looks identical.
+
+The confirmation has to appear **after the collapse**, because the panel is gone
+by the time the keystroke lands. So it goes in the closed notch, reusing the chin
+that already exists for "music playing": the island widens for ~1 second and shows
+a checkmark plus "Pasted". That also means it cannot be a row highlight, a notice
+strip, or anything else inside the panel.
+
+Design constraints:
+
+- **Two outcomes, two signals.** Auto-paste shows ✓ Pasted; ⌥-click shows
+  "Copied" instead, so the difference is visible rather than something you have to
+  remember.
+- **The toggle is a small icon in the clipboard header**, beside the window
+  picker, persisted in `UserDefaults`. Off means no chin and no widening at all —
+  not a dimmed one.
+- **It must not fight the music chin.** If a track is playing, the chin is already
+  showing artwork and a waveform; the confirmation takes precedence for its second
+  and then reverts, rather than the two trying to share the band.
+- **Failure must stay loud.** `AccessibilityPaster.postPaste()` returning false
+  already sets `panelNotice` "Grant Accessibility to paste directly." That path
+  must keep reporting a problem, not a tick.
+
+Open question, deliberately not decided here: whether a 1 s chin is better than
+delaying the collapse by ~600 ms and showing the confirmation in the panel. Delay
+is more legible but makes every paste feel slower, and the keystroke would land
+late. Chin is the current choice.
+
 ### Timing
 
 There is **no collapse-completion callback** — `collapse()` sets `expanded =
@@ -466,11 +504,11 @@ never touches the real file.
 | Drag-in | Opens the shelf, not the default panel; a cancelled drag restores the previous panel |
 | Drag-out | `NSView` + `NSDraggingSource`, 3 pt threshold, copy-only, icon as the drag preview — **verified by use** |
 
-**Not yet exercised by hand**, so treat as unproven rather than working: the row
-context menu (Open / Reveal / Copy Path / Remove), the hover `✕` removal, and
-scroll-wheel forwarding through `ShelfRowInput` when the list is taller than the
-panel. All three sit behind the same `NSView` that owns the mouse, which is the
-part of this panel most likely to bite.
+**All exercised by hand, 15 Nov.** The row context menu (Open / Reveal / Copy
+Path / Remove), the hover `✕` removal and scroll-wheel forwarding through
+`ShelfRowInput` all work, as does dragging a file onto the closed notch now that
+dropping one grows the panel by `31 pt` per file. Those three were the parts most
+likely to bite, because they share one `NSView` that owns the mouse.
 
 ### Design
 
@@ -618,9 +656,8 @@ only reliable way to ask.
 
 ### Drag-out mechanics — built and verified
 
-Confirmed working by use: dragging a row out delivers the file to the destination.
-The context-menu, ✕-removal and scroll-under-row paths were not separately
-reported, so treat those as unverified.
+Confirmed working by use: dragging a row out delivers the file to the destination,
+as do the context menu, ✕-removal and scroll-under-row — all confirmed 15 Nov.
 
 Dragging a row out is what makes the shelf a tool rather than a list, and it
 cannot be done with SwiftUI's `.onDrag`. `.onDrag` and `.onTapGesture` compete
@@ -722,18 +759,41 @@ Not proposed: tap-artwork-to-flip. No value, extra state.
 
 ## 7. Browser / YouTube media
 
-**Hypothesis: this already works and needs no code.** YouTube publishes a Media
-Session; Chrome and Safari forward it to the same system now-playing session
-that `MediaRemote` already reads. Pressing play/pause from the island while the
-tab is backgrounded should control it.
+**Original hypothesis, now disproved: `MediaRemote` returns nothing at all on this
+macOS.** The plan assumed YouTube's Media Session would reach the island for free
+because Chrome forwards it to the system now-playing session that `MediaRemote`
+reads. It does not, and the reason has nothing to do with Chrome.
 
-Must be tested before any code is written:
+*Measured 15 Nov, macOS 26:* `MRMediaRemoteGetNowPlayingInfo` returns an **empty
+dictionary** — 8 consecutive polls, `keys=0`, with Spotify both paused and
+playing. Every track the island has ever shown came from the Spotify AppleScript
+bridge, which is why this went unnoticed: the Spotify path wins whenever Spotify is
+running, and MediaRemote was never exercised.
+
+This is the documented macOS 15.4+ behaviour. MediaRemote now requires an
+**entitled** process, which a normal app is not, and the community adapter that
+works around it does so by loading a helper dylib inside `/usr/bin/perl`, using
+perl's entitlement. Not an accident of this codebase.
+
+Consequences:
+
+- **0a cannot pass with the current transport.** A browser will look identical to
+  Spotify-paused: nothing. The entitlement check is on the *caller*, not the
+  *source*, so this is not a test that needs re-running with a video playing.
+- **There is no artwork URL to fetch.** The schema has `ArtworkData`,
+  `ArtworkDataWidth`, `ArtworkDataHeight` and `ArtworkMIMEType` — no
+  `ArtworkURL`. The thumbnail is whatever the playing app hands over as bytes; it
+  cannot be chosen or downloaded by us.
+- **Artwork arrives late when it arrives at all**, which is why `NowPlaying`
+  has a `carryingArtwork(from:)` rule: a poll that comes back without the image
+  must not erase the one already on screen. That rule is currently **inert**,
+  because nothing ever reaches it — it exists for whatever fixes the transport.
+
+The original manual test, kept for when a transport exists:
 
 1. Play a YouTube video in Chrome, background it
 2. Hover the notch — does the title appear?
 3. Press pause from the island — does the video stop?
-
-If it works: nothing to do, document it.
 
 If it does not, fallback is AppleScript `do JavaScript` pausing every `<video>`
 element in Chrome/Safari. This satisfies "pause the tab I'm not looking at" but
@@ -746,13 +806,23 @@ Spotify whenever it is running, falling back to MediaRemote. With a browser
 playing and Spotify merely *running but paused*, this ordering is worth
 re-checking — it may mask the browser session.
 
+**"Phase 6" in §8 is the transport question, and it is now required rather than
+hypothetical.** Three routes, none free:
+
+| Route | Cost | Catch |
+| --- | --- | --- |
+| Entitled helper (spawn `/usr/bin/perl`, load a bundled dylib, read JSON) | 1–2 days | Ships a second binary and an IPC path; this is what BoringNotch-class apps do |
+| Per-browser AppleScript / JS | half a day | Needs Develop → *Allow JavaScript from Apple Events* **and** Automation; per-tab targeting means tab enumeration |
+| Accept no browser media | — | The island stays Spotify-only |
+
 ---
 
 ## 8. Phasing
 
 | Phase | Work | Effort |
 | --- | --- | --- |
-| 0 | Test YouTube/Chrome against the island; confirm clipboard paste-notice behaviour on this macOS build | **partial — never run** |
+| 0a | Test YouTube/Chrome against the island (§7) | **answered: transport is dead** — MediaRemote returns zero keys, so this needs a decision, not a test |
+| 0b | Does *reading* the pasteboard trigger a macOS "pasted from" banner? (Distinct from the in-app paste confirmation in §3) | not run |
 | 1 | ~~Panel shell: `PanelID`, provider protocol, registry, window resizing, icon nav, default panel~~ **done** | — |
 | 1.5 | ~~Rename to `dev.island` + `NSAppleEventsUsageDescription`; self-signed cert; `build.sh` signing; verify grants survive a rebuild~~ **done** | — |
 | 2 | ~~Clipboard provider + frequent strip + `AccessibilityPaster`~~ **done** | — |
@@ -760,24 +830,31 @@ re-checking — it may mask the browser session.
 | 4 | ~~Shelf: drag-in detector, store with bookmarks and load-time pruning, panel, file-only drop, drag-out~~ **done, verified by use** | — |
 | 5 | ~~Music visuals: black glass, 132 pt artwork, white transport circle~~ **done** | — |
 | 5.5 | ~~Remove the now-playing strip, per-panel sizes, window resized at endpoints only~~ **done** | — |
-| 6 | Browser fallback, only if Phase 0 demands it | half day |
+| 5.6 | ~~`24h / 7d / 30d / All` windows on both history panels; `EXTENDED_HISTORY`; `ISLAND_DATA_DIR` sandbox~~ **done, verified against invented data** | — |
+| 6 | Browser media transport — **now required**, three routes in §7. Not a fallback, a prerequisite | ½–2 days, needs a decision |
+| 7 | Paste confirmation in the closed notch, toggleable from the clipboard header (§3) | ~1 hour |
+| 8 | View dedup: `PanelEmptyState`, `FrequentChip`, `HistoryRow`, `PanelSectionHeader` (§13) | ~1.5 hours |
 
-Phases 1–5.5 are complete. The panel shell did turn each feature into a provider
+Phases 1–5.6 are complete. The panel shell did turn each feature into a provider
 plus a view: the clipboard and terminal panels each landed without touching the
 window controller.
 
-Phase 3 added one prerequisite outside the repo: `setopt INC_APPEND_HISTORY` in
-`~/.zshrc`. Without it zsh only flushes history on shell exit, so the panel would
-show stale commands; it renders a notice strip when the option is missing.
+Two prerequisites now live outside the repo, both in `~/.zshrc`:
+`setopt INC_APPEND_HISTORY` (without it zsh only flushes history on shell exit, so
+the panel shows stale commands and raises a notice strip) and
+`setopt EXTENDED_HISTORY` (without it there is no time to filter on — see §2).
 
 ---
 
 ## 9. Risks
 
-1. **Three independent redraw drivers.** Marquee at 30 fps (`TimelineView`), the
-   progress bar ticking every second, and the waveform. Gate `MarqueeText` to
-   `model.expanded` and pause `Equalizer` when hidden, or idle CPU creeps back
-   to where it was before the polling fix.
+1. **Independent redraw drivers.** The marquee runs at 30 fps (`TimelineView`),
+   the progress bar ticks every second, and the equaliser animates
+   `repeatForever`. Measured after the polling fix: **0.0% closed and idle, ~2%
+   closed and playing**. The marquee is now effectively gated — it only exists
+   inside `MusicPanel`, which only exists while expanded — so the remaining cost
+   is the equaliser, which is the live activity and therefore intentional.
+   See the accepted rough edge in §9.
 2. **Drag-and-drop into a `.mainMenu + 3` panel.** Works, but the window must
    not be click-through mid-drag, and drag types must be registered on an
    `NSView` behind the SwiftUI content. See §5 for the full mechanics.
@@ -788,9 +865,10 @@ show stale commands; it renders a notice strip when the option is missing.
    notification. 0.4 s integer compare is the cheapest available option, but it
    is still a wakeup while the app is idle.
 5. **Reading pasteboard contents may show a macOS paste notice (unverified).**
-   Phase 0 was never run, so this was never deliberately tested. No notice has
-   been observed while capturing, but that is absence of evidence rather than a
-   check.
+   This is check 0b and it has never been run deliberately. No notice has been
+   observed while capturing, but that is absence of evidence rather than a check.
+   Distinct from the **in-app** paste confirmation in §3/Phase 7 — that one is
+   ours and is being added because auto-paste is otherwise invisible.
 6. **Signing identity and TCC (resolved).** Ad-hoc signing produced a new
    designated requirement on every build, so TCC grants dropped and auto-paste
    failed silently. `build.sh` now signs with `Dev Island Local Signing` (§11),
@@ -841,6 +919,33 @@ show stale commands; it renders a notice strip when the option is missing.
     The real trap was in the gate, not the monitor: see §5 for why `changeCount` is
     not a drag-start signal.
 
+### Accepted rough edges
+
+Deliberate, not overlooked. Each is a cost that was judged smaller than its fix;
+any of them can be reversed.
+
+1. **A paused track is invisible while the notch is closed.** The chin is gated on
+   `isPlaying`, so pausing collapses the island back to the bare cutout and the
+   artwork disappears even though the track is still loaded. Correct for "nothing
+   is happening", annoying if you paused to talk to someone. *Fix:* gate on
+   `nowPlaying != nil` with a 2–3 minute grace, the way the deleted strip did —
+   which is exactly the behaviour the strip was removed for, so this needs a
+   decision rather than a patch.
+2. **The empty shelf is taller than a one-file shelf.** 128 pt vs 102 pt, because
+   the empty state is two lines of text under an icon and one row is a single row.
+   Dropping your first file therefore *shrinks* the card by 26 pt. It is the
+   correct height in both cases; it just reads as a wobble.
+3. **The settle delays are hand-tuned.** `0.6 s` expand, `0.45 s` collapse, chosen
+   to land just past the spring's response (`0.36 s` / `0.24 s`) so the shrink
+   cannot fire mid-flight. They are constants, not derived from the animation.
+4. **The equaliser animates while the island is closed and music is playing** —
+   that is the live activity, and it costs roughly 2% CPU for as long as it is on
+   screen. Pausing stops it. This is risk 1 in its remaining form.
+5. **The window was once sampled at `X = -59` for a frame during a display
+   reconfiguration**, where it should be `536`. It self-corrected immediately and
+   was never reproduced. The likely cause is `targetScreen()` returning a screen
+   with a different frame mid-transition; nothing is guarding against it.
+
 ---
 
 ## 10. Decisions
@@ -856,6 +961,8 @@ show stale commands; it renders a notice strip when the option is missing.
 - **Terminal panel click:** Auto-paste with trailing newline stripped so a stray Return cannot execute a pasted command.
 - **Signing identity:** Self-signed Code Signing certificate (`Dev Island Local Signing`), not ad-hoc, so TCC Accessibility and Automation grants survive rebuilds.
 - **Clipboard capture while closed:** Accepted (`0.4 s` `changeCount` integer compare).
+- **Paste confirmation lives in the closed notch, not in the panel.** The panel is gone by the time ⌘V lands, so the acknowledgement has to survive the collapse: the chin widens for ~1 s with ✓ Pasted, or "Copied" for ⌥-click. Toggleable from the clipboard header and off means off — no chin at all. Phase 7.
+- **Testing never touches real data.** `ISLAND_DATA_DIR` redirects every store plus the instance lock, and `ISLAND_HISTORY` points the terminal panel at a fixture. The time windows were verified that way; the shell history and `clipboard.json` were confirmed untouched afterwards.
 - **History windows are a filter, never retention.** `24h / 7d / 30d / All` per panel, applied to both the list and the chips. Nothing is deleted; a shorter clipboard cap is the separate, safe lever if storage ever needs to shrink.
 - **Panel ranking:** Highlight by frecency (`uses × 0.5 ^ (days / 14)`), never filter by frequency. The only deny-list is the terminal panel's manual trivia list (§4); the clipboard panel has none, because any copied text is potentially worth pasting back.
 - **Ignore rules are manual:** no auto-learning from paste history.
@@ -995,7 +1102,12 @@ pointer; it is checked in `scheduleCollapse()` alongside `isInteracting` (§1).
   for anything with rows.
 - `screencapture -x -R` fails with "could not create image from rect" while the
   island window is up. Capture the full screen and crop.
-- Captures go black when the display sleeps or is locked (`CGDisplayIsAsleep=1`).
+- Captures go black when the display sleeps, and **fail outright** when the screen
+  is locked: `screencapture -l` returns "could not create image from window" and
+  `CGWindowListCopyWindowInfo` reports nonsense bounds (a 0.9-scaled, offset
+  rectangle). Check `ioreg -n Root -d1 -a | grep CGSSessionScreenIsLocked` before
+  believing any measurement taken during a run. The offscreen `ISLAND_RENDER`
+  path still works while locked, which is why the previews were usable then.
 - `screencapture` costs ~66–150 ms per frame, so it cannot resolve a 0.24–0.36 s
   animation. Do not try to see a transition that way — the window bounds are the
   thing to measure, not the pixels: sample `CGWindowListCopyWindowInfo` every 60 ms
@@ -1011,3 +1123,60 @@ pointer; it is checked in `scheduleCollapse()` alongside `isInteracting` (§1).
   `~/Library/Application Support/Dev Island/instance.lock`. Kill the old process
   before relaunching, or the new one exits silently:
   `pkill -f "DevIsland.app/Contents/MacOS/DevIsland"`.
+
+---
+
+## 13. Code review (15 Nov)
+
+A full pass over `Sources/` against this plan produced the findings below. Half of
+them were already fixed when the document was read, because it was taken before
+`8fbfbbd` and `7d13423` — check a finding against the tree before acting on it.
+
+| # | Finding | Status |
+| --- | --- | --- |
+| 1A | Application Support boilerplate in four places | **done** — `AppSupport.directory()` (`ff2505e`) |
+| 1B | Duplicated panel subviews | **pending** — Phase 8, see below |
+| 1C | Atomic JSON write duplicated in both stores | **done** — `AtomicJSON.write` (`ff2505e`) |
+| 2.1 | `PlaceholderPanel` unreachable since `ExpandedPanel` became exhaustive | **done** — deleted (`674f7e3`) |
+| 2.2 | Orphaned doc comment left mid-sentence above `NoticeStrip` | **done** — deleted (`674f7e3`) |
+| 2.3 | Five stale references in this file | **done** — `7d13423` |
+| 3.1 | Shelf item-count change did not resize the panel | **done** — `8fbfbbd`, with a correction below |
+| 3.2 | `observeScreens` hid the panel but left the timers running | **done** — `8fbfbbd` |
+| 3.3 | Sorting inside `body`, on every render | **done** — `674f7e3` |
+
+**Correction to 3.1.** The finding said nothing subscribed to `shelf.$items`, and
+proposed subscribing in `IslandModel`. `IslandController` was already subscribed
+and did resize the window. What was missing was `objectWillChange`: `islandSize`
+is read by `IslandRootView` to decide where the shape is heading, so without a
+re-publish SwiftUI never re-rendered and the shape stayed at the old height while
+the window grew, clipping the new row. The subscription did move into
+`IslandModel`, but for that reason. **Anything that changes `islandSize` needs
+both** the re-publish and the geometry call — §2.
+
+### 1B — the deferred extraction
+
+Four duplicated views across `ClipboardPanel`, `TerminalPanel` and `ShelfPanel`:
+
+| View | Copies | Notes |
+| --- | --- | --- |
+| Empty state | 2 | Clipboard and terminal only; both are now *filter-aware*, so the strings have to be parameters, not baked in |
+| Frequent chip | 2 | Identical pill: 24 pt tall, radius 7, `0.055` fill, `0.07` stroke, 9 pt icon, 11 pt label |
+| History row | 2 | 26 pt, `8/14` padding, hover fill, 10 pt icon at width 13, 12 pt middle-truncated label |
+| Section header | 3 | 11 pt semibold, tracking 0.6, `0.3` opacity, 14 pt tall, 8 pt leading |
+
+Deferred rather than skipped because it is ~200 lines of view code whose failure
+mode is **subtle spacing drift** — a 1 pt padding difference that no compiler and
+no test catches. It wants before/after captures of all three panels, which is more
+work than the extraction itself.
+
+Shape, so it does not get re-derived:
+
+```swift
+PanelEmptyState(symbol: String, title: String, subtitle: String)
+FrequentChip(symbol: String, text: String, monospaced: Bool, help: String, action: () -> Void)
+HistoryRow(icon: String, text: String, monospaced: Bool, trailing: () -> Content)
+PanelSectionHeader(title: String, trailing: (() -> Content)?)
+```
+
+`HistoryRow` needs the trailing `@ViewBuilder` because the rows differ only there:
+the clipboard puts a `TimelineView(.everyMinute)` age, the terminal puts `"%d×"`.
