@@ -8,7 +8,7 @@ that appear while the island is closed.
 ![Clicking a clipboard row pastes it into the app you came from](docs/autopaste.gif)
 
 *A click pastes into whatever had focus; the toast under the notch says so. `⌃⌥↓`
-opens it from the keyboard and arms the arrows.*
+opens it from the keyboard, `⌃⌘V` lands on the clipboard.*
 
 Source-only: there are no release binaries. Build it with `./build.sh` (below).
 
@@ -18,8 +18,8 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
 | --- | --- | --- |
 | **Clipboard** | 520 × 320 | Copy history with frecency chips, ages and kinds. Click a row to paste it into whatever had focus |
 | **Terminal** | 520 × 320 | `~/.zsh_history`, trivia filtered, with a `24h / 7d / 30d / All` window |
-| **Shelf** | 440 × 106–260 | File references dropped on the island. Drag them back out to move them |
-| **Music** | 520 × 188\* | Artwork, scrub and transport for whatever the system calls "now playing" |
+| **Shelf** | 440 × 106–260 | File references dropped on the island. Drag them back out to move them, or open one with `↩` |
+| **Music** | 520 × 188\* | Artwork, scrub and transport for whatever the system calls "now playing". `↑`/`↓` change the system volume, `↩` plays and pauses |
 | **Settings** | 520 × 265\* | Every setting, one row each |
 
 \* On a 32 pt notch. Music and Settings grow with a taller one — 193.5 pt and
@@ -27,29 +27,27 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
 
 ![The four content panels in use](docs/panel-tour.gif)
 
-*Clipboard → Terminal → Shelf → Music. The arrows tour the two list panels; Shelf and
-Music are a click or `⌥3` / `⌥4`.*
+*Clipboard → Terminal → Shelf → Music, on `←` / `→`.*
 
 ## Using it
 
 - **Open** by hovering the notch; it closes shortly after the pointer leaves. It
   reopens on whichever panel you left it on, unless a fixed default is picked.
-- **Open from the keyboard** with `⌃⌥↓`. It has three states: closed it opens on the
-  last panel and arms the keyboard; open it arms where it is; armed it closes.
-  Hovering never arms anything, so the bare keys below are only ever taken after this
-  deliberate press.
-- **Switch panels** with the icons either side of the cutout or `⌥1`–`⌥5`, which work
-  whenever the island is open. Once the keyboard is armed, `←` / `→` also cycle the
-  two list panels. There is no arrow path to Shelf, Music or Settings — those are
-  `⌥3`, `⌥4` and `⌥5`, and reaching one ends the keyboard mode.
-- **Work the history from the keyboard**, like ⊞V on Windows. `⌃⌥↓` arms it on
-  whichever list is showing; `⌃⌘V` arms it on the clipboard from anywhere, which is
-  the fast path when you have just copied something. Then `↑` / `↓` choose a row,
-  `←` / `→` change list, `↩` pastes into the app you were in, and `⎋`, a click
-  elsewhere or switching apps ends it. The terminal list is the same machinery, so a
-  command costs no second shortcut: `⌃⌘V`, then `→`. Change the shortcut or switch it
-  off in Settings or under **Clipboard Shortcut** in the menu bar capsule.
-  `← → ↑ ↓ ↩ ⌤ ⎋` all carry no modifier, and are only taken while that mode is on.
+- **The keyboard drives whatever is showing.** While the island is up, `←` / `→` step
+  between panels and `↑` / `↓` drive the current one: the highlighted row in either
+  history list or on the shelf, the volume on Music. `↩` pastes the highlighted row,
+  opens the file, or plays and pauses. `⎋` closes.
+  `← → ↑ ↓ ↩ ⌤ ⎋` carry no modifier, so they are taken from every app for as long as
+  the island is up — which is why it closes as soon as the pointer leaves.
+- **Open from the keyboard** with `⌃⌥↓`, or land directly on a list: `⌃⌘V` for the
+  clipboard, `⌥⇧⌘T` for the terminal. Each one highlights the first row so it can be
+  acted on without moving the pointer. Change or switch off the clipboard shortcut in
+  Settings or under **Clipboard Shortcut** in the menu capsule; the terminal one is
+  fixed, because `⇧⌘T` — the chord a preset would offer — is Reopen Closed Tab in three
+  browsers and two editors.
+- **Switch panels** with the icons either side of the cutout, `⌥1`–`⌥5`, or `←` / `→`
+  while the island is up. The arrows cycle the four content panels; `⌥5` reaches
+  Settings, which the arrows step over.
 - **Click a row** to paste into whatever had focus, or copy. `⌥`-click always
   copies. The **Autopaste** pill toggles the default and is remembered; either way
   a short toast says what happened — `Auto-pasted` or `Copied to clipboard`.

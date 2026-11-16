@@ -696,3 +696,52 @@ shortcut is configurable because only it had a free choice.
 **Behaviour change from phase 7:** neither named shortcut toggles any more. `⌃⌘V` on an
 island that is already up lands on the clipboard and selects, rather than closing it.
 `⎋` and `⌃⌥↓` are the close keys.
+
+### Phase 10 — documentation
+
+`README.md`: the intro captions, the panel table (Shelf `↩`, Music volume), and the
+*Using it* bullets rewritten around one rule — the keyboard drives whatever is showing,
+because the island is up. The old three-state "arms / armed" wording is gone, and so is
+the claim that there is no arrow path to Shelf and Music.
+
+`PLAN.md`: §2's shortcut paragraph, its registration table and its "mode group" note;
+§3's key table and four bullets; §14's file table (two new rows); and §16, which now
+describes the two changes that came after it — `keyboardMode` deleted, and the panels
+declaring their own rows. §16's measured table gained three rows, two of them honest
+"unverified".
+
+**Deliberately not rewritten:** §8's phasing table, §9's risks and §10's decisions.
+They are the record of a design that was replaced, and §16 opens by saying so. Editing
+them would erase the reasoning that produced the current one, which is the only thing
+that makes the history worth keeping.
+
+---
+
+## Round 2 — what is now where
+
+| | |
+|---|---|
+| Commits | `109b867` arm on hover · `18e0475` panels declare rows · `470991d` terminal shortcut · this docs commit |
+| Branch | `merge-kami`, 18 ahead of `master`, unpushed |
+| Typecheck | clean at every commit and at the tip |
+| Run state | phases 7–9 have never been built or launched |
+
+### The rule, in one sentence
+
+**While the island is open, the arrow keys belong to it**; `←`/`→` pick the panel,
+`↑`/`↓` drive that panel, `↩` acts on the highlighted thing, `⎋` closes.
+
+### Still to verify, in order of what would embarrass me most
+
+1. **`↑`/`↓` on Music.** `SystemVolume` is untested against real hardware, and a
+   device with no settable element fails silently. If the volume does not move, the
+   first thing to check is whether any element reported settable — not the arithmetic.
+2. **The exit audit.** `⎋`, `↩`, a click away, `⌘Tab`. Any path that leaves
+   `← → ↑ ↓ ↩ ⌤ ⎋` captured in the frontmost app is the release blocker it has been
+   since phase 5.
+3. **Held-arrow repeat.** Still unmeasured. `SystemVolume` amplifies the problem: a
+   non-repeating arrow means one sixteenth per press, which is slow to traverse.
+4. **`←`/`→` through four panels.** The order comes from `PanelID.contentPanels`, so a
+   press on Music should land back on Clipboard rather than stalling.
+5. **Shelf highlight and scroll.** The row is addressable by `.id(item.id.uuidString)`
+   and the scroll is keyed on `model.listSelection`; both are new and neither has run.
