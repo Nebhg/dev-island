@@ -34,7 +34,10 @@ protocol PanelKeyboard: AnyObject {
 /// Clipboard history. The only panel where activating has a side effect on the data:
 /// pasting bumps the entry's frecency.
 final class ClipboardKeyboard: PanelKeyboard {
-    private let model: IslandModel
+    /// `unowned`, not strong: the model owns this object through `keyboardPanels`,
+    /// so a strong back-reference is a cycle that keeps the whole island alive — and
+    /// preview mode builds throwaway models precisely so that they can go away.
+    private unowned let model: IslandModel
 
     init(model: IslandModel) {
         self.model = model
@@ -58,7 +61,10 @@ final class ClipboardKeyboard: PanelKeyboard {
 /// which is the one behavioural difference from the clipboard panel and the reason
 /// these are two conformances and not one generic one.
 final class TerminalKeyboard: PanelKeyboard {
-    private let model: IslandModel
+    /// `unowned`, not strong: the model owns this object through `keyboardPanels`,
+    /// so a strong back-reference is a cycle that keeps the whole island alive — and
+    /// preview mode builds throwaway models precisely so that they can go away.
+    private unowned let model: IslandModel
 
     init(model: IslandModel) {
         self.model = model
@@ -81,7 +87,10 @@ final class TerminalKeyboard: PanelKeyboard {
 /// The file shelf. A row's id is the item's UUID as a string, and `↩` opens the file
 /// rather than pasting it — `autoPaste` has nothing to say here.
 final class ShelfKeyboard: PanelKeyboard {
-    private let model: IslandModel
+    /// `unowned`, not strong: the model owns this object through `keyboardPanels`,
+    /// so a strong back-reference is a cycle that keeps the whole island alive — and
+    /// preview mode builds throwaway models precisely so that they can go away.
+    private unowned let model: IslandModel
 
     init(model: IslandModel) {
         self.model = model
@@ -105,7 +114,10 @@ final class ShelfKeyboard: PanelKeyboard {
 /// volume, and `↩` is play/pause. It is a navigation target with no selection, which
 /// is what `rowIDs == nil` means.
 final class MusicKeyboard: PanelKeyboard {
-    private let model: IslandModel
+    /// `unowned`, not strong: the model owns this object through `keyboardPanels`,
+    /// so a strong back-reference is a cycle that keeps the whole island alive — and
+    /// preview mode builds throwaway models precisely so that they can go away.
+    private unowned let model: IslandModel
 
     init(model: IslandModel) {
         self.model = model
@@ -135,7 +147,10 @@ final class MusicKeyboard: PanelKeyboard {
 /// picker moves to its next value — which makes the whole panel usable without the
 /// pointer and without a second verb.
 final class SettingsKeyboard: PanelKeyboard {
-    private let model: IslandModel
+    /// `unowned`, not strong: the model owns this object through `keyboardPanels`,
+    /// so a strong back-reference is a cycle that keeps the whole island alive — and
+    /// preview mode builds throwaway models precisely so that they can go away.
+    private unowned let model: IslandModel
 
     init(model: IslandModel) {
         self.model = model

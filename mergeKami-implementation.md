@@ -925,3 +925,43 @@ and it is the one Ben asked for.
 The exit audit — the blocker that has been open since phase 5 — is confirmed. The
 remaining unverified items are the ones that need different hardware or a longer soak,
 not different code.
+
+---
+
+## Pre-merge check
+
+| | |
+|---|---|
+| `master` | `63c0998`, an ancestor of the branch — the merge is a fast-forward, no conflicts possible |
+| Branch | `merge-kami`, 23 ahead, 0 behind |
+| Worktree | clean |
+| Typecheck | clean at the tip |
+| Exit audit | **confirmed live** |
+| Known regressions | none open |
+
+### One defect found and fixed while checking
+
+`IslandModel` owns `keyboardPanels`, and each conformance held the model **strongly** —
+`IslandModel → keyboardPanels → ClipboardKeyboard → model`. A retain cycle, so the model
+could never be released. Harmless in an app that runs until quit, and not harmless in
+preview mode, which builds throwaway models specifically so they can go away. All five
+conformances now hold it `unowned`; the model owns them, so the lifetime is the model's
+by construction and `unowned` says exactly that.
+
+### What is still not known, and cannot be checked from here
+
+- Whether the volume steps feel right on Bluetooth or an external DAC. The built-in
+  device was measured directly; other devices were not.
+- Whether anything drifts after hours of use. Every timer added in this pass is either
+  tied to `expanded` or to a key press, and none of them were watched over a long run.
+
+Neither blocks a merge. Both are the kind of thing that shows up as a bug report rather
+than a failing test.
+
+### Known costs, accepted and written down
+
+- `⌘⌥↓` takes Insert Cursor Below from VS Code and its forks.
+- `⌘⌥B` takes Show Bookmarks from Safari.
+- While the island is up, `← → ↑ ↓ ↩ ⌤ ⎋` do not reach the frontmost app. That is the
+  price of the arrows being bare, and it is why the island closes when the pointer
+  leaves.
