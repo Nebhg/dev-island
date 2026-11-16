@@ -10,7 +10,9 @@ that appear while the island is closed.
 *A click pastes into whatever had focus; the toast under the notch says so. `⌘⌥↓`
 opens it from the keyboard, `⌃⌘V` lands on the clipboard.*
 
-Source-only: there are no release binaries. Build it with `./build.sh` (below).
+Source-only: there are no release binaries. Build it with `./build.sh` (below). A
+signed, notarised DMG is the only thing that will ever be published, and not until
+the app is finished — `PLAN.md` §17 has the reasoning and the steps.
 
 ## What it does
 
@@ -166,6 +168,14 @@ setopt EXTENDED_HISTORY     # timestamp entries, needed by the 24h/7d/30d window
 Without the first the panel shows stale history and says so; without the second,
 commands have no timestamps and only appear under "All".
 
+One macOS behaviour is worth knowing about, because it looks exactly like a bug in
+this app. For a **restored** Terminal window, `/etc/zshrc_Apple_Terminal` points
+`HISTFILE` at `~/.zsh_sessions/<session>.historynew` and leaves `~/.zsh_history`
+alone until that window is closed. A terminal left open for days therefore stops
+writing the shared file entirely. The panel reads both the shared file and the live
+session files, so it does not care — but anything else that reads `~/.zsh_history`
+will lag, and that is macOS's doing rather than the shell's.
+
 ## Media
 
 Anything the system reports as "now playing" — Spotify, Apple Music, a browser
@@ -184,7 +194,7 @@ reading is gated.
 | Symptom | Likely cause |
 | --- | --- |
 | Auto-paste only copies | Accessibility grant missing for this build. Re-grant after an ad-hoc rebuild, or use a stable identity |
-| Terminal panel is empty or stale | The two `setopt` lines above, then open a **new** terminal window |
+| Terminal panel is stale | Check the two `setopt` lines above. If they are present, the file it would otherwise read is being bypassed by Terminal's per-session history (see above) — the panel reads those too, so a build from before that fix is the other explanation |
 | Music panel empty, Spotify is playing | Automation permission for Spotify |
 | The clipboard shortcut does nothing | Another app may hold that chord. macOS does not report it — registration succeeds either way — so pick another preset under **Clipboard Shortcut** |
 | `↑`/`↓` on Music do nothing | The panel says `No volume control` when the output device reports no volume it will let an app set. If it says nothing at all, the keys are not reaching the panel |

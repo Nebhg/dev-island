@@ -583,14 +583,19 @@ untested fallback would have been dead code pretending to be insurance.
 - **Prerequisite:** `setopt INC_APPEND_HISTORY` in `~/.zshrc` (without `INC_APPEND_HISTORY` or `SHARE_HISTORY`, macOS zsh only flushes on shell exit). The terminal provider checks `~/.zshrc` on load and renders a dismissible hint strip when missing instead of silently showing stale history.
 - **Second prerequisite** (for the time windows, §2): `setopt EXTENDED_HISTORY`, so zsh prefixes each entry with `: <epoch>:<elapsed>;`. Without it the file carries bare command lines and there is no time to filter on — only order. The parser accepts both shapes; entries written before the option was enabled have no timestamp and appear **only** under the "All" window, because inventing a time for them would be a guess and hiding them from "All" would lose them.
 - *Future note:* adding a `precmd` hook in `~/.zshrc` that writes to a dedicated `~/.dev-island-history` file would be a cleaner long-term alternative that works regardless of zsh history options.
-- Watch `~/.zsh_history` with a `DispatchSource` file watcher handling `.delete`/`.rename` by closing the old descriptor and re-arming on the path (zsh atomically replaces on some operations). No polling. Ignore `~/.zsh_sessions/*` — the main file covers it.
+- **Read `~/.zsh_sessions/*.historynew` too, and this is not optional** (measured 16 Nov 2026). macOS's `/etc/zshrc_Apple_Terminal` redirects `HISTFILE` to `~/.zsh_sessions/<session>.historynew` for any session that was **restored**, and it does so unconditionally — the `SHELL_SESSION_HISTORY=0` opt-out is only consulted for sessions with no existing archive, so a restored window ignores it. The shared file is then only appended to when that session **exits**. A terminal left open for days therefore freezes `~/.zsh_history` at the moment it was opened while every new command goes somewhere else. On the machine this was diagnosed on, the shared file had not moved since the previous evening and 6 live session files held everything since. The panel showed the freeze and looked broken.
+- Do **not** read `~/.zsh_sessions/*.history`: that is the copy a session leaves behind on exit, and by then the same content has already been appended to the shared file. Reading both counts every command twice.
+- Watch the shared file and each live session file with a `DispatchSource` (`.write`/`.extend`), and the `~/.zsh_sessions` directory itself (`.write`) so a session starting or ending re-arms the set. `.delete`/`.rename` on a file re-arms against the path (zsh atomically replaces on some operations). No polling.
+- **Confirmed live (16 Nov 2026):** a command typed in an open terminal appears in the panel immediately, with no rebuild and no reopen.
+- **Diagnosing this again:** read `HISTFILE` with `printenv`, never by running an interactive shell. `zsh -i` (any form) sources `/etc/zshrc_Apple_Terminal` and its exit hook rewrites `~/.zsh_history`; a diagnostic `zsh -lic 'echo $HISTFILE'` on this machine cost 32 history entries. `fc -p`/`fc -P` is the mechanism — it pushes and pops the history stack, and the pop writes the file back out.
 
 ### Parse
 
 - Re-parse the full file on change (~50 KB / ~1,300 lines is <1 ms) rather than incremental tailing, avoiding double-counting and offset-reset bugs
 - Reassemble trailing `\` continuations into one logical command, joined with a **space**, not a newline: the row is a single line, and a pasted command containing newlines would execute line by line. Only the continuation's leading indentation is dropped — internal spacing is preserved, because it can matter inside quotes
 - Strip blanks and leading whitespace
-- `uses` = occurrence count; recency = last position in the file (no timestamps available)
+- `uses` = occurrence count across the merged files; the same command seen at the identical second in two files is one event and is dropped from the later one, while repeats inside one file are real and are counted
+- Recency = the `EXTENDED_HISTORY` stamp when present, file order when not. Across files this has to be a timestamp sort — concatenated positions say nothing about each other, and sorting by file would rank a live session's command above a newer one just because its file sorts later. Unstamped entries sink to the front, which is correct: they are everything zsh wrote before the option was turned on
 - Handle the `": <start>:<elapsed>;<command>"` prefix even though `EXTENDED_HISTORY` is off, so turning it on later does not break parsing
 - Decode lossily (`String(decoding:as:)`): real history files contain non-UTF-8 bytes from zsh's metafying, and a strict decode fails outright
 
@@ -1865,3 +1870,66 @@ this branch has been through a launch.
 - **`player.startPolling()` runs on every expand**, not only on the Music panel
   (`IslandController.swift:842`). It contradicts the single-lifecycle rule in §2.
   Pre-existing, separate from this work.
+
+## 17. Distribution — deferred, and never unsigned
+
+**Decision (16 Nov 2026): nothing is distributed while development is unfinished.**
+When it is finished, the artefact is a **signed, notarised DMG** and nothing else — no
+unsigned zip, no "right-click → Open" paragraph, no `xattr -d
+com.apple.quarantine` line in a README. An unsigned build on someone else's Mac is a
+Gatekeeper dialog they cannot get past without a shell command, which is a worse first
+run than no DMG at all.
+
+### The packaging part is small
+
+`hdiutil` is the whole toolchain. The app is 1.7 MB and the image lands near 1 MB:
+
+```zsh
+mkdir -p build/dmg && cp -R "Dev Island.app" build/dmg/
+ln -s /Applications build/dmg/Applications
+hdiutil create -volname "Dev Island" -srcfolder build/dmg -ov -format UDZO DevIsland.dmg
+```
+
+The `Applications` symlink is what produces the familiar drag-to-install window. Icon
+positions and a background image need AppleScript against a mounted volume, or a tool
+like `create-dmg`; that is decoration and should not exist before there is something
+signed to put inside it.
+
+### The signing part is not
+
+| Gate | Needs | Blocks what |
+| --- | --- | --- |
+| Developer ID Application certificate | Apple Developer Program, $99/yr | everything: a self-signed signature chains to no root Gatekeeper trusts |
+| Hardened runtime | `--options runtime` on the app **and** the nested framework, plus `com.apple.security.automation.apple-events` | notarisation rejects the bundle without the first; Spotify automation breaks silently without the second |
+| Notarisation | `notarytool submit --wait`, then `stapler staple` | the "downloaded app cannot be checked" dialog |
+| TCC grants | the user, by hand, in System Settings | Accessibility and Automation are per-app, per-machine, and cannot be granted by an installer |
+
+The last row does not go away. A clipboard-and-paste tool needs Accessibility to paste;
+no amount of signing changes that, so a DMG's advantage over "clone and run
+`./build.sh`" is smaller for *this* app than for most.
+
+### What is already known to be in the way
+
+- **`arm64` only.** `build.sh` follows `uname -m`. Universal means compiling twice and
+  `lipo -create`, or shipping Intel Macs an honest error.
+- **`LSMinimumSystemVersion` is `26.0`.** Any image written today is macOS 26-only.
+  That is a distribution decision to make deliberately, not an accident to leave in.
+- **Static versions.** `CFBundleShortVersionString 1.0` / `CFBundleVersion 1` never
+  change, so nothing can be updated over or rolled back.
+- **`docs/*.gif` contain real private data** — a repo name, shell history, a username.
+  Fine in a private repo; not fine in a public one or inside an image people mount and
+  browse.
+- **No `package.sh` exists.** Packaging and notarisation are unimplemented, and stay
+  unimplemented until the app is finished.
+
+### When development ends, in order
+
+1. Pick a version scheme and make `build.sh` read it from one place.
+2. Add `--options runtime` and the Apple Events entitlement, then re-check that
+   Spotify control still works — the failure is silent.
+3. Enrol, obtain a Developer ID, and replace `Dev Island Local Signing` in `build.sh`.
+4. `notarytool submit --wait` + `stapler staple`, then verify with `spctl -a -vvv` on
+   a **downloaded** copy rather than a built one.
+5. Only then write `package.sh` and publish the DMG.
+
+Until step 5, the README's "source-only: there are no release binaries" stays true.

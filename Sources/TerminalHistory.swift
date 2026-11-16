@@ -1,10 +1,10 @@
 import Foundation
 
-/// One logical command from `~/.zsh_history`.
+/// One logical command from a shell history file.
 ///
-/// The file carries no timestamps (`EXTENDED_HISTORY` is off), so recency has to
-/// come from file position: a later line means more recent. That is also why the
-/// ranking has no time decay — a decay curve would be invented, not measured.
+/// Recency comes from the command's own `EXTENDED_HISTORY` stamp when there is one,
+/// and from file position when there is not. The ranking that follows has no time
+/// decay for the same reason: a decay curve would be invented, not measured.
 struct TerminalEntry: Identifiable, Equatable {
     var id: String { command }
     let command: String
@@ -30,18 +30,22 @@ struct TerminalEntry: Identifiable, Equatable {
     }
 }
 
+/// One command as it appeared in one file, before the files are merged.
+struct TerminalCommand: Equatable {
+    let command: String
+    let timestamp: Date?
+}
+
 enum TerminalHistory {
-    /// Parses the whole file.
+    /// Parses one file into commands, in file order.
     ///
     /// ~50 KB / ~1,300 lines is well under a millisecond, and a full re-parse
     /// avoids the double-counting and offset-reset bugs that incremental tailing
     /// brings.
-    static func parse(_ text: String) -> [TerminalEntry] {
-        var entries: [TerminalEntry] = []
-        var indexByCommand: [String: Int] = [:]
+    static func parse(_ text: String) -> [TerminalCommand] {
+        var commands: [TerminalCommand] = []
         var pending = ""
         var pendingStamp: Date?
-        var position = 0
 
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
             var line = String(rawLine)
@@ -78,21 +82,73 @@ enum TerminalHistory {
             pending = ""
             pendingStamp = nil
             guard !command.isEmpty else { continue }
+            commands.append(TerminalCommand(command: command, timestamp: stamp))
+        }
+        return commands
+    }
 
-            position += 1
-            if let existing = indexByCommand[command] {
+    /// Merges several files into one set of entries.
+    ///
+    /// The same command can appear in more than one file: Terminal.app seeds a
+    /// restored session from its archive and then writes its own copy, and a
+    /// session that was killed mid-append leaves its file behind. Identical text at
+    /// the identical second is the same event, so later files drop it — but repeats
+    /// *within* one file are real and are counted.
+    ///
+    /// Ordering is by stamp, not by file. Once files are concatenated their
+    /// positions say nothing about each other, and sorting by file would rank a
+    /// live session's command above a newer one just because its file sorts later.
+    /// Entries with no stamp are the oldest kind — everything zsh wrote before
+    /// `EXTENDED_HISTORY` was turned on — so they sink to the front, keeping file
+    /// order among themselves.
+    static func merge(_ streams: [[TerminalCommand]]) -> [TerminalEntry] {
+        var seen: Set<String> = []
+        var ordered: [TerminalCommand] = []
+
+        for stream in streams {
+            var mine: Set<String> = []
+            for command in stream {
+                let key = Self.key(command)
+                guard !seen.contains(key) else { continue }
+                mine.insert(key)
+                ordered.append(command)
+            }
+            seen.formUnion(mine)
+        }
+
+        let sorted = ordered.enumerated()
+            .sorted { lhs, rhs in
+                let left = lhs.element.timestamp ?? .distantPast
+                let right = rhs.element.timestamp ?? .distantPast
+                return left == right ? lhs.offset < rhs.offset : left < right
+            }
+            .map(\.element)
+
+        var entries: [TerminalEntry] = []
+        var indexByCommand: [String: Int] = [:]
+        for (position, command) in sorted.enumerated() {
+            if let existing = indexByCommand[command.command] {
                 entries[existing].uses += 1
                 entries[existing].lastPosition = position
-                // Later in the file means later in time, so the newest stamp wins.
-                if let stamp { entries[existing].lastRun = stamp }
+                // Later in the merge means later in time, so the newest stamp wins.
+                if let stamp = command.timestamp { entries[existing].lastRun = stamp }
             } else {
-                indexByCommand[command] = entries.count
+                indexByCommand[command.command] = entries.count
                 entries.append(TerminalEntry(
-                    command: command, uses: 1, lastPosition: position, lastRun: stamp
+                    command: command.command,
+                    uses: 1,
+                    lastPosition: position,
+                    lastRun: command.timestamp
                 ))
             }
         }
         return entries
+    }
+
+    private static func key(_ command: TerminalCommand) -> String {
+        // `\u{1}` cannot appear in a command line, so it cannot make two different
+        // commands collide.
+        "\(command.timestamp?.timeIntervalSince1970 ?? -1)\u{1}\(command.command)"
     }
 
     /// Use count first, then recency. Ties go to the more recent command.
