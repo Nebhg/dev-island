@@ -857,3 +857,46 @@ panels. Settings keeps its "detour" property: `collapse()` still sends you back 
 Nothing was declined. Worth recording that the volume fix was **a feedback fix plus a
 landing fix**, not an audio fix — the audio code was correct on the first try and had
 been measured as correct before the report arrived.
+
+---
+
+## Round 5 — repeat, volume direction, Settings highlight
+
+### Holding an arrow
+
+Carbon fires `kEventHotKeyPressed` once per physical press and has no release event, so
+this had to be generated. `KeyRepeater` starts a 0.32 s delay on the press, then ticks
+every 60 ms and asks `CGEventSource.keyState(.hidSystemState, key:)` whether the key is
+still down. When it is not, the timer stops.
+
+Polling the *hardware* state rather than waiting for an event is what makes this safe:
+it also covers the cases where no release would ever arrive — the island collapsing
+mid-hold, the app deactivating, the key being let go while another app had focus. The
+repeater is stopped from `uninstallModeKeys()` as well, so a held key cannot outlive its
+registration, and `HotKeys.deinit` stops it because the run loop owns the timer.
+
+Only `↑`/`↓`. Holding `←`/`→` through the panels is a slide, not a repeat, and there is
+nothing to count.
+
+### Volume was inverted
+
+`↑` sent `-1`, which is correct for a list — up is the *previous* row — and wrong for a
+volume. Negated in `MusicKeyboard` only, with the reason written next to it, rather than
+inverting the convention that every other panel relies on.
+
+### Settings highlight stopped short of the row
+
+The row's content is inset unevenly: `textInset` on the left, `textInset -
+PillSize.regular.padding` on the right, because the pill's own padding has to be
+subtracted so the last label lands on the text edge. The background was painted on that
+uneven box, so the fill ended short on the right and read as a cropped band.
+
+The row now claims `maxWidth: .infinity` before the fill is drawn, and the fill's inset
+dropped from 4 pt to 2 pt. Content padding is unchanged — the fix is about what box the
+background covers, not where the text sits.
+
+### Confirmed live by this round
+
+Hover arming, `⌘⌥B`, `↩` paste followed by working arrows, and the volume itself — the
+level moves, which was the thing the probe had already predicted and the build could not
+show.

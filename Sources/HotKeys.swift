@@ -88,6 +88,7 @@ final class HotKeys {
     private var toggleRef: EventHotKeyRef?
     private var shortcutRef: EventHotKeyRef?
     private var terminalRef: EventHotKeyRef?
+    private let repeater = KeyRepeater()
     private var isInstalled = false
 
     /// One raw-value namespace shared by every group, so a hotkey ID identifies
@@ -226,6 +227,9 @@ final class HotKeys {
     }
 
     func uninstallModeKeys() {
+        // Before the refs: a held key whose registration is gone would otherwise keep
+        // firing until the hardware state said otherwise, which is a poll away.
+        repeater.stop()
         modeRefs.forEach { UnregisterEventHotKey($0) }
         modeRefs.removeAll()
     }
@@ -253,6 +257,12 @@ final class HotKeys {
     func uninstallTerminalShortcut() {
         if let terminalRef { UnregisterEventHotKey(terminalRef) }
         terminalRef = nil
+    }
+
+    deinit {
+        // The repeater's timer is retained by the run loop, not by this object, so
+        // nothing else would ever cancel it.
+        repeater.stop()
     }
 
     /// Replaces the clipboard shortcut; nil switches it off.
@@ -324,6 +334,14 @@ final class HotKeys {
         return ref
     }
 
+    /// Keeps firing `action` for as long as the key under it is held.
+    ///
+    /// Only the vertical keys: holding `←`/`→` through the panels is a slide, not a
+    /// repeat, and there is nothing to count.
+    private func repeatWhileHeld(_ keyCode: CGKeyCode, action: @escaping () -> Void) {
+        repeater.start(keyCode: keyCode, action: action)
+    }
+
     private func dispatch(_ slot: Slot?) {
         guard let slot else { return }
         switch slot {
@@ -344,12 +362,71 @@ final class HotKeys {
             onModeKey?(.cyclePanel(1))
         case .up:
             onModeKey?(.moveRow(-1))
+            repeatWhileHeld(CGKeyCode(kVK_UpArrow)) { [weak self] in self?.onModeKey?(.moveRow(-1)) }
         case .down:
             onModeKey?(.moveRow(1))
+            repeatWhileHeld(CGKeyCode(kVK_DownArrow)) { [weak self] in self?.onModeKey?(.moveRow(1)) }
         case .paste, .pasteKeypad:
             onModeKey?(.paste)
         case .close:
             onModeKey?(.close)
         }
+    }
+}
+
+// MARK: - Held keys
+
+/// Repeats a mode key while it is physically held.
+///
+/// Carbon delivers exactly one `kEventHotKeyPressed` per physical press, and there is
+/// no release event to pair it with, so a held arrow moves one row and stops. There is
+/// nothing to subscribe to: the repeat has to be generated, and the only honest way to
+/// know whether to keep going is to ask the hardware.
+///
+/// `CGEventSource.keyState(.hidSystemState)` is that question. It reflects the switch,
+/// not the event stream, so it stays true even though the hotkey consumed the press.
+/// When it goes false the timer stops — which also covers the cases where no key-up
+/// would ever arrive: the window closing, the app deactivating, the key being released
+/// while another app had focus.
+final class KeyRepeater {
+    /// Long enough that a normal press never repeats. Short enough to feel like a
+    /// keyboard rather than a menu.
+    private static let delay: TimeInterval = 0.32
+    /// ~16 rows a second, which is about the fastest a list can be read while moving.
+    private static let interval: TimeInterval = 0.06
+
+    private var timer: Timer?
+    private var keyCode: CGKeyCode = 0
+
+    var isRepeating: Bool { timer != nil }
+
+    func start(keyCode: CGKeyCode, action: @escaping () -> Void) {
+        stop()
+        self.keyCode = keyCode
+        let delay = Timer(timeInterval: Self.delay, repeats: false) { [weak self] _ in
+            self?.beginStepping(action)
+        }
+        timer = delay
+        RunLoop.main.add(delay, forMode: .common)
+    }
+
+    private func beginStepping(_ action: @escaping () -> Void) {
+        guard isDown else { return stop() }
+        let step = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            guard self.isDown else { return self.stop() }
+            action()
+        }
+        timer = step
+        RunLoop.main.add(step, forMode: .common)
+    }
+
+    private var isDown: Bool {
+        CGEventSource.keyState(.hidSystemState, key: keyCode)
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
     }
 }

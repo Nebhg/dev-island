@@ -1787,8 +1787,8 @@ because both mean "the next value".
 | `⌃⌘V` | always | open on the clipboard, first row selected |
 | `⌘⌥B` | always | open on the terminal list, first row selected |
 | `⌥1`–`⌥5` | while expanded | jump to a panel; `⌥5` reaches Settings |
-| `←` / `→` | while expanded | step between the panels, Settings included |
-| `↑` / `↓` | while expanded | the panel's own: rows on a list, the shelf or Settings; volume on Music |
+| `←` / `→` | while expanded | step between the panels, Settings included. No repeat — holding it would be a slide |
+| `↑` / `↓` | while expanded | the panel's own: rows on a list, the shelf or Settings; volume on Music. Holds repeat |
 | `↩`, `⌤` | while expanded | the panel's own: paste, open the file, play/pause, advance a setting |
 | `⎋` | while expanded | close |
 

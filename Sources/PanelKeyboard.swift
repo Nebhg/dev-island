@@ -114,7 +114,9 @@ final class MusicKeyboard: PanelKeyboard {
     var rowIDs: [String]? { nil }
 
     func moveVertical(_ delta: Int) {
-        guard let level = SystemVolume.adjust(by: Float(delta)) else {
+        // Negated: the vertical convention is `↑` = -1 because that is the *previous*
+        // row, and volume rises the other way. Every other panel counts down the list.
+        guard let level = SystemVolume.adjust(by: Float(-delta)) else {
             model.showVolumeNotice("No volume control")
             return
         }

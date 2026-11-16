@@ -967,13 +967,17 @@ struct SettingsPanel: View {
         }
         .padding(.leading, IslandMetrics.textInset)
         .padding(.trailing, IslandMetrics.textInset - PillSize.regular.padding)
+        // The content is inset unevenly — the pill's own padding eats the right edge —
+        // so the row has to claim the full width before the highlight is painted, or
+        // the fill stops short of the panel edge and reads as a cropped band.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: PanelID.settingsRowHeight)
         .background(
             // A step brighter than hover, same as `HistoryRow`, so the keyboard's row
             // and the pointer's row can be told apart.
             RoundedRectangle(cornerRadius: IslandMetrics.rowRadius, style: .continuous)
                 .fill(.white.opacity(selected ? 0.11 : 0))
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 2)
         )
     }
 }

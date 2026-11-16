@@ -37,6 +37,8 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
   between panels and `↑` / `↓` drive the current one: the highlighted row in either
   history list or on the shelf, the volume on Music. `↩` pastes the highlighted row,
   opens the file, or plays and pauses. `⎋` closes.
+  Hold `↑` or `↓` and it keeps moving — the repeat is generated, because a Carbon
+  hotkey fires once per press and never reports the release.
   `← → ↑ ↓ ↩ ⌤ ⎋` carry no modifier, so they are taken from every app for as long as
   the island is up — which is why it closes as soon as the pointer leaves.
 - **Open from the keyboard** with `⌘⌥↓`, or land directly on a list: `⌃⌘V` for the
