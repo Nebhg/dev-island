@@ -35,8 +35,8 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
   reopens on whichever panel you left it on, unless a fixed default is picked.
 - **The keyboard drives whatever is showing.** While the island is up, `←` / `→` step
   between panels and `↑` / `↓` drive the current one: the highlighted row in either
-  history list or on the shelf, the volume on Music. `↩` pastes the highlighted row,
-  opens the file, or plays and pauses. `⎋` closes.
+  history list, on the shelf or in Settings, and the volume on Music. `↩` pastes the
+  highlighted row, opens the file, plays or pauses, or advances a setting. `⎋` closes.
   Hold `↑` or `↓` and it keeps moving — the repeat is generated, because a Carbon
   hotkey fires once per press and never reports the release.
   `← → ↑ ↓ ↩ ⌤ ⎋` carry no modifier, so they are taken from every app for as long as
@@ -72,10 +72,26 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
   Default Panel, Clipboard Shortcut, Terminal Shortcut and Clean Layout too.
 - **Quit** from the capsule in the menu bar. There is deliberately no login item.
 
-Why the shortcuts sit on `⌃⌥` and `⌥` rather than `⌘1`–`⌘5` or `⌥⌘1`–`⌥⌘5` is
-recorded in `PLAN.md` §2 ("Navigation"): macOS and most apps claim ⌘-number and
-⌃-number first, and those win before a Carbon hotkey is consulted, so the shortcut
-would silently never arrive.
+### The whole keyboard
+
+| Key | When | Does |
+| --- | --- | --- |
+| `⌘⌥↓` | any time | Open on the panel it would open on, first row selected. Closes when the island is up |
+| `⌃⌘V` | any time | Open on the clipboard, first row selected |
+| `⌘⌥B` | any time | Open on the terminal, first row selected. Can be switched off in Settings |
+| `⌥1`–`⌥5` | island open | Jump to a panel in display order |
+| `←` / `→` | island open | Step between panels |
+| `↑` / `↓` | island open | The panel's own: rows in a list, on the shelf or in Settings; the volume on Music. Hold to repeat |
+| `↩` / `⌤` | island open | The panel's own: paste, open the file, play or pause, advance the highlighted setting |
+| `⎋` | island open | Close |
+
+The clipboard shortcut is a preset — `⇧⌘V`, `⌥⌘V`, `⌃⌘V` or off — because each one
+takes a chord away from other apps and only you know which you can spare.
+
+Why the panel keys sit on plain `⌥` rather than `⌘1`–`⌘5` or `⌥⌘1`–`⌥⌘5` is recorded
+in `PLAN.md` §2 ("Navigation"): macOS and most apps claim ⌘-number and ⌃-number first,
+and those win before a Carbon hotkey is consulted, so the shortcut would silently never
+arrive.
 
 There is no "shortcut taken" warning, and one should not be added. `RegisterEventHotKey`
 reports success for a chord another app already holds, so a warning keyed off its
@@ -171,6 +187,7 @@ reading is gated.
 | Terminal panel is empty or stale | The two `setopt` lines above, then open a **new** terminal window |
 | Music panel empty, Spotify is playing | Automation permission for Spotify |
 | The clipboard shortcut does nothing | Another app may hold that chord. macOS does not report it — registration succeeds either way — so pick another preset under **Clipboard Shortcut** |
+| `↑`/`↓` on Music do nothing | The panel says `No volume control` when the output device reports no volume it will let an app set. If it says nothing at all, the keys are not reaching the panel |
 | A dragged file will not drop | Run with `ISLAND_DRAG_PROBE=1`: it logs the operations the source allows and what the island chose. A drag that offers only move is refused on purpose; every other source is taken |
 | Nothing at all | Run it from Terminal to see stderr: `./DevIsland.app/Contents/MacOS/DevIsland` |
 | Two media helpers / odd duplicates | Relaunch; the app sweeps a stale helper at startup by pid file |
@@ -195,6 +212,8 @@ The two `setopt` lines in `~/.zshrc` are harmless but can go too.
 | `build.sh` | Build, sign, install, register |
 | `docs/` | Screen recordings of the app in use |
 | `PLAN.md` | The design document: what was built, what was rejected and why, measured facts, risks |
+| `mergeKami.md` | The plan the keyboard layer was built from; `PLAN.md` §16 supersedes parts of it |
+| `mergeKami-implementation.md` | What was actually built, phase by phase, including every place it disagreed with that plan |
 | `MIGRATION.md` | Notes from the bundle-ID rename, kept for the record |
 
 ## Licence
