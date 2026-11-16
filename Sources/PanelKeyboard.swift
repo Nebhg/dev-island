@@ -114,10 +114,39 @@ final class MusicKeyboard: PanelKeyboard {
     var rowIDs: [String]? { nil }
 
     func moveVertical(_ delta: Int) {
-        SystemVolume.adjust(by: Float(delta))
+        guard let level = SystemVolume.adjust(by: Float(delta)) else {
+            model.showVolumeNotice("No volume control")
+            return
+        }
+        model.showVolumeNotice("Volume \(level)%")
     }
 
     func activate(_ rowID: String, autoPaste: Bool) {
         model.player.toggle()
+    }
+}
+
+
+// MARK: - Settings
+
+/// The settings panel. Every row is a control, so `↩` advances it — a switch flips, a
+/// picker moves to its next value — which makes the whole panel usable without the
+/// pointer and without a second verb.
+final class SettingsKeyboard: PanelKeyboard {
+    private let model: IslandModel
+
+    init(model: IslandModel) {
+        self.model = model
+    }
+
+    var rowIDs: [String]? { SettingsRow.allCases.map(\.rawValue) }
+
+    func moveVertical(_ delta: Int) {
+        model.moveSelection(in: .settings, by: delta)
+    }
+
+    func activate(_ rowID: String, autoPaste: Bool) {
+        guard let row = SettingsRow(rawValue: rowID) else { return }
+        row.advance(model: model)
     }
 }

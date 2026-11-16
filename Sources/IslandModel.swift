@@ -21,7 +21,6 @@ final class IslandModel: ObservableObject {
             // Settings is a detour, never the panel to come back to.
             guard activePanel != .settings else { return }
             lastContentPanel = activePanel
-            if keyboardPanels[activePanel]?.rowIDs != nil { lastListPanel = activePanel }
             // Previews build throwaway models; they must not overwrite the
             // user's real last panel.
             if !PreviewMode.active {
@@ -32,10 +31,6 @@ final class IslandModel: ObservableObject {
 
     /// The last panel that was not Settings; what closing on Settings goes back to.
     private var lastContentPanel = PanelID.clipboard
-
-    /// The last panel that was a list; where the keyboard lands when the panel it was
-    /// otherwise about to open has no rows to drive.
-    private var lastListPanel = PanelID.clipboard
 
     /// One keyboard conformance per panel, filled at the end of `init`.
     ///
@@ -82,23 +77,31 @@ final class IslandModel: ObservableObject {
     /// What `expand()` is about to show.
     var panelOnOpen: PanelID { reopensLastPanel ? activePanel : defaultPanel }
 
-    /// Where the keyboard lands when it is opened from the toggle key.
-    ///
-    /// `panelOnOpen` when that panel holds a list, because opening where the user last
-    /// was is the point of `reopensLastPanel`. Otherwise the last panel that did: a
-    /// panel with no list has no first row to select, so the highlight would have
-    /// nowhere to go. Music is a navigation target, not a landing one.
-    var keyboardLandingPanel: PanelID {
-        // An island that is already up lands where it is: the user is looking at a
-        // panel, and moving them off it would be a change they did not ask for. A
-        // closed island has not chosen yet, so it follows `panelOnOpen`.
-        let target = expanded ? activePanel : panelOnOpen
-        return keyboardPanels[target]?.rowIDs != nil ? target : lastListPanel
-    }
-
     /// Set by a provider when its panel is degraded — e.g. terminal history
     /// needing `setopt INC_APPEND_HISTORY`. Rendered as a strip above content.
     @Published var panelNotice: String?
+
+    /// What `↑`/`↓` on the Music panel did, for about a second.
+    ///
+    /// There is no system HUD for a volume change made through CoreAudio, so without
+    /// this a working adjustment and a broken one look identical — which is exactly the
+    /// report that came back. A *failure* writes here too, spelled out, because "the
+    /// key did nothing" and "there is no volume control on this output device" should
+    /// not be the same experience.
+    @Published private(set) var volumeNotice: String?
+
+    private var volumeWork: DispatchWorkItem?
+
+    /// Shows `text` in place of the track's subtitle for a moment. One timer, replaced
+    /// rather than stacked, like the paste toast.
+    func showVolumeNotice(_ text: String?) {
+        volumeWork?.cancel()
+        volumeNotice = text
+        guard text != nil else { return }
+        let work = DispatchWorkItem { [weak self] in self?.volumeNotice = nil }
+        volumeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1, execute: work)
+    }
 
     /// A short message under the notch saying what the click did, for ~1.2 s.
     ///
@@ -377,7 +380,8 @@ final class IslandModel: ObservableObject {
             .clipboard: ClipboardKeyboard(model: self),
             .terminal: TerminalKeyboard(model: self),
             .shelf: ShelfKeyboard(model: self),
-            .music: MusicKeyboard(model: self)
+            .music: MusicKeyboard(model: self),
+            .settings: SettingsKeyboard(model: self)
         ]
 
         player.$nowPlaying
@@ -521,7 +525,7 @@ final class IslandModel: ObservableObject {
 
     /// The panels `←`/`→` step through, in display order.
     var navigablePanels: [PanelID] {
-        PanelID.contentPanels.filter { keyboardPanels[$0] != nil }
+        PanelID.allCases.filter { keyboardPanels[$0] != nil }
     }
 
     // MARK: - Clipboard

@@ -1774,8 +1774,10 @@ list (Music), `[]` means the list is empty right now (an empty clipboard). Confl
 them is what made an empty list end the mode.
 
 `←`/`→` are not in the protocol. Changing panel means the same thing everywhere, so it
-lives in the model and walks `PanelID.contentPanels` filtered to the panels that have a
-conformance — the order they appear on screen, minus Settings.
+lives in the model and walks `PanelID.allCases` filtered to the panels that have a
+conformance — the order they appear on screen. Settings is one of them: `↑`/`↓` walk its
+rows and `↩` advances the highlighted control, one verb for both a switch and a picker
+because both mean "the next value".
 
 ### The keys
 
@@ -1785,9 +1787,9 @@ conformance — the order they appear on screen, minus Settings.
 | `⌃⌘V` | always | open on the clipboard, first row selected |
 | `⌘⌥B` | always | open on the terminal list, first row selected |
 | `⌥1`–`⌥5` | while expanded | jump to a panel; `⌥5` reaches Settings |
-| `←` / `→` | while expanded | step between the four content panels |
-| `↑` / `↓` | while expanded | the panel's own: rows on a list or the shelf, volume on Music |
-| `↩`, `⌤` | while expanded | the panel's own: paste, open the file, play/pause |
+| `←` / `→` | while expanded | step between the panels, Settings included |
+| `↑` / `↓` | while expanded | the panel's own: rows on a list, the shelf or Settings; volume on Music |
+| `↩`, `⌤` | while expanded | the panel's own: paste, open the file, play/pause, advance a setting |
 | `⎋` | while expanded | close |
 
 The named shortcuts no longer toggle. `⌃⌘V` on an island the pointer already holds open
@@ -1841,6 +1843,7 @@ that is the inconsistency this section exists to remove.
 | Registration follows `expanded` | **observed** — hovering then pressing `←`/`→`/`↑`/`↓` did nothing in the build *before* this change; see the round-2 notes in the implementation record |
 | Every exit unregisters the mode's keys | **design intent** — untested; the exit list is `collapse()` and a non-list panel |
 | `⌘⌥B` costs Safari's Show Bookmarks; `⌘⌥↓` costs VS Code's Insert Cursor Below | **known conflicts**, from the apps' own documentation rather than measured here |
+| CoreAudio volume on the built-in output device works | **measured** — a probe grew "MacBook Pro Speakers" from 0.375 to 0.4375 and back; element 0 is the only one the device exposes |
 | `↑`/`↓` on Music changes the system volume | **unverified** — needs hardware |
 | A held `↓` repeats | **unknown** — Carbon may deliver one event per down-stroke |
 | The mode's arrows reach an empty list without ending it | **by construction** — `retargetSelection` keeps the `""` id |

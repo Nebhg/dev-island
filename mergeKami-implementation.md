@@ -792,3 +792,68 @@ list would then have failed the whole adjustment while the two channels beside i
 usable. That is the bug worth catching before it is reported as "volume doesn't work".
 
 Still unverifiable here: whether any of it moves the volume on real hardware.
+
+---
+
+## Round 4 — after the first working build
+
+Confirmed live: hover arms the arrows, `↑`/`↓` move from a standing start, `⌘⌥B` lands
+on the terminal, `↩` pastes and the arrows keep working afterwards. Three reports came
+back.
+
+### 1. Volume did nothing
+
+**It is not the CoreAudio code.** A probe against the real device:
+
+```
+default device status=0 id=81
+name: MacBook Pro Speakers
+element 0: has=true settable=true getStatus=0 value=0.375
+element 1: has=false
+element 2: has=false
+```
+
+and a write/read round trip moved it 0.375 → 0.4375 → 0.375. The API call was never the
+problem.
+
+**What was:** two things, neither of them the arithmetic.
+
+- **No feedback.** There is no system HUD for a CoreAudio volume write, so a working
+  adjustment and a key that never arrived looked identical. The panel now borrows the
+  artist line to show `Volume 44%` for a second.
+- **The panel was often not Music.** The landing bug below meant `⌘⌥↓` could reopen on
+  Shelf, where `↑`/`↓` move shelf rows.
+
+A **failed** adjustment now writes `No volume control` to the same line, so "nothing
+happened" and "this output device has no volume" are no longer the same experience. The
+three failure modes (no device, no settable element, nothing readable) stay distinct
+early returns for the same reason.
+
+### 2. Music did not keep its panel
+
+`keyboardLandingPanel` sent the landing panel to `lastListPanel` whenever the target had
+no rows — which is Music. So closing on Music and reopening put you on whatever list was
+last visited. The fallback existed because a panel with no list "had nowhere to put a
+highlight", which stopped being true when the highlight became something only an arrow
+press creates. Deleted, along with `lastListPanel`: `⌘⌥↓` now lands on `panelOnOpen` like
+every other open path.
+
+### 3. Settings is a navigation target
+
+`SettingsRow` (new, `Panels.swift`) is the panel's row list: it is what the view renders
+*and* what the arrows walk, so the two orders cannot drift. `settingsRowCount` is derived
+from it instead of being a constant beside a hand-written list.
+
+`〈↩〉` **advances** the highlighted row — a switch flips, a picker moves to its next value.
+One verb for both, which is why there is no second key and no way to go backwards: the
+sets are two to five items and cycling reaches everything.
+
+`navigablePanels` moved from `contentPanels` to `allCases`, so `←`/`→` now walk all five
+panels. Settings keeps its "detour" property: `collapse()` still sends you back to
+`lastContentPanel`.
+
+### Where this differs from what was asked
+
+Nothing was declined. Worth recording that the volume fix was **a feedback fix plus a
+landing fix**, not an audio fix — the audio code was correct on the first try and had
+been measured as correct before the report arrived.

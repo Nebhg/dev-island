@@ -19,7 +19,7 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
 | **Clipboard** | 520 × 320 | Copy history with frecency chips, ages and kinds. Click a row to paste it into whatever had focus |
 | **Terminal** | 520 × 320 | `~/.zsh_history`, trivia filtered, with a `24h / 7d / 30d / All` window |
 | **Shelf** | 440 × 106–260 | File references dropped on the island. Drag them back out to move them, or open one with `↩` |
-| **Music** | 520 × 188\* | Artwork, scrub and transport for whatever the system calls "now playing". `↑`/`↓` change the system volume, `↩` plays and pauses |
+| **Music** | 520 × 188\* | Artwork, scrub and transport for whatever the system calls "now playing". `↑`/`↓` change the system volume (with the level shown where the artist line is), `↩` plays and pauses |
 | **Settings** | 520 × 265\* | Every setting, one row each |
 
 \* On a 32 pt notch. Music and Settings grow with a taller one — 193.5 pt and
@@ -47,8 +47,9 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
   costs Insert Cursor Below in VS Code, and `⌘⌥B` costs Show Bookmarks in Safari —
   both are registered for the life of the process.
 - **Switch panels** with the icons either side of the cutout, `⌥1`–`⌥5`, or `←` / `→`
-  while the island is up. The arrows cycle the four content panels; `⌥5` reaches
-  Settings, which the arrows step over.
+  while the island is up. The arrows walk every panel in display order, Settings
+  included — where `↑` / `↓` move down the rows and `↩` advances the row's control:
+  a switch flips, a picker moves to its next value.
 - **Click a row** to paste into whatever had focus, or copy. `⌥`-click always
   copies. The **Autopaste** pill toggles the default and is remembered; either way
   a short toast says what happened — `Auto-pasted` or `Copied to clipboard`.
@@ -64,7 +65,8 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
 - **Settings** is the gear panel (`⌥5`): Clean layout, Autopaste, the clipboard and
   terminal shortcuts, both history windows, and which panel hover opens on (Last
   used, or always one). **Clean layout** hides the history panels' filters and
-  Frequent row, leaving just the lists; it is off by default. The menu bar capsule has
+  Frequent row, leaving just the lists; it is off by default. Every row is reachable
+  with `↑` / `↓` and advanced with `↩`. The menu bar capsule has
   Default Panel, Clipboard Shortcut, Terminal Shortcut and Clean Layout too.
 - **Quit** from the capsule in the menu bar. There is deliberately no login item.
 

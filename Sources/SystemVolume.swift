@@ -21,15 +21,21 @@ enum SystemVolume {
     /// system HUD per step.
     private static let step: Float = 1.0 / 16.0
 
-    static func adjust(by delta: Float) {
-        guard let device = defaultOutputDevice else { return }
+    /// Moves the volume by `delta` steps and returns the level it landed on, 0–100.
+    ///
+    /// The return value is what the caller shows: there is no system HUD for a
+    /// volume change made through CoreAudio, so without it a working adjustment and a
+    /// broken one look identical.
+    @discardableResult
+    static func adjust(by delta: Float) -> Int? {
+        guard let device = defaultOutputDevice else { return nil }
         let elements = settableElements(of: device)
         // Read from the first element that actually answers, not from the first in
         // the list. A device can advertise a settable main element and still refuse
         // to be read, and taking the head of the list would then fail the whole
         // adjustment while the two channels beside it were perfectly usable.
         guard let current = elements.lazy.compactMap({ volume(of: device, element: $0) }).first
-        else { return }
+        else { return nil }
         let next = min(max(current + delta * step, 0), 1)
         // Written to every element that takes one. A stereo device exposes its two
         // channels separately and has no main element, so writing only the first would
@@ -37,6 +43,7 @@ enum SystemVolume {
         for element in elements {
             setVolume(next, of: device, element: element)
         }
+        return Int((next * 100).rounded())
     }
 
     // MARK: - CoreAudio

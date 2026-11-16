@@ -68,7 +68,9 @@ enum PanelID: String, CaseIterable, Identifiable {
 
     /// Settings rows: a label with a one-line hint under it, and a control.
     static let settingsRowHeight: CGFloat = 34
-    static let settingsRowCount = 7
+    /// Derived from the rows themselves. It used to be a constant beside a list of
+    /// hand-written rows, which is a matching pair nobody was checking.
+    static var settingsRowCount: Int { SettingsRow.allCases.count }
 
     /// The switcher band, the panel padding above and below, and the rows with a
     /// 1 pt gap between them — the same gap the history lists use.
@@ -230,4 +232,75 @@ final class SettingsProvider: PanelProvider {
 
     func start() { model.panelNotice = nil }
     func stop() {}
+}
+
+
+// MARK: - Settings rows
+
+/// One row of the Settings panel.
+///
+/// The order here *is* the panel's order, for both the eye and the arrow keys — the
+/// view iterates this rather than listing the rows again.
+enum SettingsRow: String, CaseIterable {
+    case cleanLayout
+    case autopaste
+    case clipboardShortcut
+    case terminalShortcut
+    case clipboardHistory
+    case terminalHistory
+    case opensOn
+
+    var title: String {
+        switch self {
+        case .cleanLayout: "Clean layout"
+        case .autopaste: "Autopaste"
+        case .clipboardShortcut: "Clipboard shortcut"
+        case .terminalShortcut: "Terminal shortcut"
+        case .clipboardHistory: "Clipboard history"
+        case .terminalHistory: "Terminal history"
+        case .opensOn: "Opens on"
+        }
+    }
+
+    /// `\u21a9` on this row.
+    ///
+    /// One verb for two kinds of control: a switch flips, a picker advances. Both are
+    /// "the next value", which is why `\u21a9` means the same thing on every row and why
+    /// there is no separate key for going back — the sets are between two and five
+    /// items and cycling in one direction reaches everything.
+    func advance(model: IslandModel) {
+        switch self {
+        case .cleanLayout:
+            model.cleanLayout.toggle()
+        case .autopaste:
+            model.autoPasteEnabled.toggle()
+        case .terminalShortcut:
+            model.terminalShortcutEnabled.toggle()
+        case .clipboardShortcut:
+            let options: [ClipboardShortcut?] = ClipboardShortcut.allCases.map(Optional.some) + [nil]
+            model.clipboardShortcut = options.next(after: model.clipboardShortcut)
+        case .clipboardHistory:
+            model.clipboard.window = HistoryWindow.allCases.next(after: model.clipboard.window)
+        case .terminalHistory:
+            model.terminal.window = HistoryWindow.allCases.next(after: model.terminal.window)
+        case .opensOn:
+            let options: [PanelID?] = [nil] + PanelID.contentPanels.map(Optional.some)
+            let current = model.reopensLastPanel ? PanelID?.none : model.defaultPanel
+            if let choice = options.next(after: current) {
+                model.defaultPanel = choice
+                model.reopensLastPanel = false
+            } else {
+                model.reopensLastPanel = true
+            }
+        }
+    }
+}
+
+private extension Array where Element: Equatable {
+    /// The next value, wrapping. Nil when the current value is not in the list, which
+    /// starts the cycle at the top rather than doing nothing.
+    func next(after value: Element) -> Element {
+        guard let index = firstIndex(of: value) else { return self[0] }
+        return self[(index + 1) % count]
+    }
 }

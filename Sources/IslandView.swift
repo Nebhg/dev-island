@@ -843,18 +843,36 @@ struct SettingsPanel: View {
 
     var body: some View {
         VStack(spacing: 1) {
-            row("Clean layout", hint: "Hides filters and Frequent") {
+            // Driven from `SettingsRow` rather than listed again, because the arrow
+            // keys walk that order and the eye walks this one — two lists would be two
+            // orders waiting to disagree.
+            ForEach(SettingsRow.allCases, id: \.self) { item in
+                content(for: item)
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private func content(for item: SettingsRow) -> some View {
+        let selected = model.isSelected(.settings, id: item.rawValue)
+        switch item {
+        case .cleanLayout:
+            row(item.title, hint: "Hides filters and Frequent", selected: selected) {
                 onOff(model.cleanLayout) { model.cleanLayout = $0 }
             }
+        case .autopaste:
             row(
-                "Autopaste",
-                hint: needsAccessibility ? "Needs Accessibility — click to open" : "Click pastes; ⌥-click copies",
+                item.title,
+                hint: needsAccessibility ? "Needs Accessibility — click to open" : "Click pastes; option-click copies",
+                selected: selected,
                 warning: needsAccessibility,
                 hintAction: needsAccessibility ? AccessibilityPaster.openSettings : nil
             ) {
                 onOff(model.autoPasteEnabled) { model.autoPasteEnabled = $0 }
             }
-            row("Clipboard shortcut", hint: "Opens the clipboard anywhere") {
+        case .clipboardShortcut:
+            row(item.title, hint: "Opens the clipboard anywhere", selected: selected) {
                 PillPicker(
                     options: ClipboardShortcut.allCases.map(Optional.some) + [nil],
                     selection: model.clipboardShortcut,
@@ -863,16 +881,20 @@ struct SettingsPanel: View {
                     select: { model.clipboardShortcut = $0 }
                 )
             }
-            row("Terminal shortcut", hint: "⌘⌥B opens the terminal anywhere") {
+        case .terminalShortcut:
+            row(item.title, hint: "⌘⌥B opens the terminal anywhere", selected: selected) {
                 onOff(model.terminalShortcutEnabled) { model.terminalShortcutEnabled = $0 }
             }
-            row("Clipboard history", hint: "How far back the list goes") {
+        case .clipboardHistory:
+            row(item.title, hint: "How far back the list goes", selected: selected) {
                 windowPicker(clipboard.window) { clipboard.window = $0 }
             }
-            row("Terminal history", hint: "How far back the list goes") {
+        case .terminalHistory:
+            row(item.title, hint: "How far back the list goes", selected: selected) {
                 windowPicker(terminal.window) { terminal.window = $0 }
             }
-            row("Opens on", hint: "Where hover lands") {
+        case .opensOn:
+            row(item.title, hint: "Where hover lands", selected: selected) {
                 // nil is "Last used".
                 PillPicker(
                     options: [nil] + PanelID.contentPanels.map(Optional.some),
@@ -890,7 +912,6 @@ struct SettingsPanel: View {
                 )
             }
         }
-        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var needsAccessibility: Bool { model.pastePermissionNotice != nil }
@@ -921,6 +942,7 @@ struct SettingsPanel: View {
     private func row<Control: View>(
         _ title: String,
         hint: String,
+        selected: Bool = false,
         warning: Bool = false,
         hintAction: (() -> Void)? = nil,
         @ViewBuilder control: () -> Control
@@ -946,6 +968,13 @@ struct SettingsPanel: View {
         .padding(.leading, IslandMetrics.textInset)
         .padding(.trailing, IslandMetrics.textInset - PillSize.regular.padding)
         .frame(height: PanelID.settingsRowHeight)
+        .background(
+            // A step brighter than hover, same as `HistoryRow`, so the keyboard's row
+            // and the pointer's row can be told apart.
+            RoundedRectangle(cornerRadius: IslandMetrics.rowRadius, style: .continuous)
+                .fill(.white.opacity(selected ? 0.11 : 0))
+                .padding(.horizontal, 4)
+        )
     }
 }
 
@@ -1021,6 +1050,9 @@ struct MusicPanel: View {
     }
 
     private var subtitle: String {
+        // Borrows the artist line rather than adding a row: the panel is a fixed
+        // height and the volume is the answer to a key press, not a new control.
+        if let notice = model.volumeNotice { return notice }
         guard let track else { return "Nothing playing" }
         if !track.artist.isEmpty { return track.artist }
         if !track.album.isEmpty { return track.album }

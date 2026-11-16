@@ -309,25 +309,25 @@ final class IslandController {
         refreshMousePolicy()
     }
 
-    /// `⌃⌥↓`. Opens on the panel the keyboard can land on, with its first row
-    /// selected; closes when the island is already up.
+    /// `⌘⌥↓`. Opens on whichever panel the island would open on anyway, with its first
+    /// row selected; closes when it is already up.
     ///
-    /// Two states rather than three. Arming used to be a separate step, before the
-    /// island became keyboard-driven whenever it is open; now the only thing this key
-    /// adds is the landing panel and the initial highlight, which a hover deliberately
-    /// does not draw.
+    /// It lands on `panelOnOpen`, not on "the last panel that has rows". That detour
+    /// existed for one round on the theory that a panel with no list had nowhere to put
+    /// a highlight — but a highlight is only ever created by an arrow press, so there
+    /// is nothing to place, and the detour's only observable effect was that closing on
+    /// Music and reopening put you on the Shelf. Every panel now keeps its state.
     func toggleExpanded() {
         guard !model.expanded else {
             model.collapse()
             return
         }
-        let landing = model.keyboardLandingPanel
-        expandWithoutPointer(on: landing)
+        expandWithoutPointer()
         // `expandWithoutPointer` can refuse — Spotlight is open, or `expand()` was
         // blocked — and selecting a row on a window that never appeared would leave a
         // highlight with nothing behind it.
         guard model.expanded else { return }
-        model.beginKeyboardMode(on: landing)
+        model.beginKeyboardMode(on: model.activePanel)
     }
 
     /// Opens the island from the toggle key or the status menu.
@@ -404,7 +404,7 @@ final class IslandController {
     /// `⌃⌘V` and `⌥⇧⌘T`: open the island on one history list, first row selected.
     ///
     /// Not a toggle. Either key on an island the pointer is already holding open means
-    /// "show me this list" and closes nothing; `⎋` and `⌃⌥↓` are how it closes. A key
+    /// "show me this list" and closes nothing; `⎋` and `⌘⌥↓` are how it closes. A key
     /// that sometimes closed the window was fine while the island was pointer-only and
     /// is a trap now that hovering opens it too.
     private func openKeyboardMode(on panel: PanelID) {
