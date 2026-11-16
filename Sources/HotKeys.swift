@@ -43,14 +43,12 @@ enum ClipboardShortcut: String, CaseIterable {
 ///
 /// - **always** — `⌃⌥↓` and the clipboard shortcut. Both have to work while the
 ///   island is shut, since a closed island is exactly when they are needed.
-/// - **panel** — `⌥1`–`⌥5`, `⌃⌥←/→` and the `⌥Tab` aliases, while the island is
-///   open. Their meaning narrows when the keyboard mode is on; see `PanelKey`.
-/// - **mode** — `↩`, `⌥↩` and `⎋`, while the island is being driven from the
-///   keyboard. These are the only chords here with no modifier, which is why their
-///   lifetime is tied to that mode and nothing else.
+/// - **panel** — `⌥1`–`⌥5`, while the island is open.
+/// - **mode** — `←`, `→`, `↑`, `↓`, `↩`, `⌤` and `⎋`, while the island is open. These
+///   are the only chords here with no modifier, which is why their lifetime is tied
+///   to the island being up and nothing else.
 final class HotKeys {
-    /// What a panel-group chord means right now. The controller decides, because
-    /// only it knows whether the island is in keyboard mode.
+    /// Which panel a number key asks for. `allCases` order, so `⌥5` reaches Settings.
     enum PanelKey {
         case select(Int)
     }

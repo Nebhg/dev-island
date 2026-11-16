@@ -600,3 +600,72 @@ panels, so `←`/`→` do nothing while Music is showing. Fixed in phase 8.
 - **Auto-repeat** on a held arrow is still unmeasured — Ben's report covers single
   presses.
 - **The exit audit** has not been run. That is still the release gate.
+
+### Phase 8 — let each panel declare its own rows
+
+**Why:** the same fact was written down four times — `rowCount`, `rowID`,
+`selectedRowIndex`, and `cycleListPanel`'s hardcoded `[.clipboard, .terminal]` — plus
+`PanelID.isList`, which was a fifth. Nothing made them agree, and adding a panel meant
+editing all of them.
+
+**What was done**
+
+New `Sources/PanelKeyboard.swift`:
+
+```swift
+protocol PanelKeyboard: AnyObject {
+    var rowIDs: [String]? { get }          // nil = not a list at all
+    func moveVertical(_ delta: Int)        // ↑ / ↓
+    func activate(_ rowID: String, autoPaste: Bool)  // ↩ and the click path
+}
+```
+
+Four conformances — `ClipboardKeyboard`, `TerminalKeyboard`, `ShelfKeyboard`,
+`MusicKeyboard` — registered into `model.keyboardPanels` at the end of `IslandModel.init`.
+
+| deleted | replaced by |
+|---|---|
+| `rowCount(of:)` | `keyboardPanels[panel]?.rowIDs?.count` |
+| `rowID(of:at:)` | the same array |
+| `selectedRowIndex` | `rows.firstIndex(of:)` at the one call site |
+| `paste(panel:rowID:autoPaste:)`'s switch | `keyboardPanels[panel]?.activate(_:autoPaste:)` |
+| `cycleListPanel` + `[.clipboard, .terminal]` | `cyclePanel` over `navigablePanels` |
+| `PanelID.isList` | `rowIDs != nil` |
+
+`navigablePanels` is `PanelID.contentPanels.filter { keyboardPanels[$0] != nil }` — the
+panels as they appear on screen, minus any without a conformance. **`←`/`→` now reach
+all four content panels**, including Music, and step over Settings because it was never
+in `contentPanels`.
+
+**The empty-list distinction is why `rowIDs` is optional.** `nil` means "no list at
+all" (Music); `[]` means "a list that is empty right now". The old code could not tell
+them apart, which is the bug that killed the mode in phase 1.
+
+**Shelf joined, and its view had to join too.** `↩` opens the file (`shelf.open`), which
+already existed. `ShelfRow` gained the same `selected ? 0.11 : hovering ? 0.06 : 0` fill
+as `HistoryRow`, the list gained a `ScrollViewReader` that follows the selection, and
+each row is addressable by `.id(item.id.uuidString)` — the keyboard's row id is the UUID
+*string*, so `ShelfItem`'s own `UUID` id would never have matched and `scrollTo` would
+have silently done nothing.
+
+**Music joined with no rows.** `rowIDs` is `nil`, so it takes part in `←`/`→` and has
+no highlight. `↑`/`↓` call `SystemVolume.adjust`, `↩` is play/pause. That is what makes
+it "navigation access and functionality" rather than a panel the arrows skip.
+
+### Where reality differs from the plan
+
+**1. Phases 8 and 9 (shelf highlight) are one commit.** They cannot be split: the
+wrapper makes the shelf selectable, and without the highlight a selectable panel with no
+visible selection is a bug rather than a step. Shipping the model half alone would mean
+a commit where `↑` moves through shelf rows invisibly.
+
+**2. The volume work is new code with no precedent in the repo.** There was no audio
+code at all — `MediaRemote` has transport only, `SpotifyBridge` seeks only. `SystemVolume`
+is ~90 lines of CoreAudio against the default output device. It tries the main element
+first and falls back to channels 1 and 2, because a stereo device advertises the channels
+and no main element, and writing only one channel would move half the volume.
+
+**3. It cannot be verified from here.** No device, no audio. A machine that reports no
+settable element fails silently, deliberately: the alternative is an error dialog for a
+key press. There is also **no on-screen feedback** — the system volume HUD only appears
+for the system's own volume keys — so the only confirmation is the sound.

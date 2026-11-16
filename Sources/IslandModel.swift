@@ -21,7 +21,7 @@ final class IslandModel: ObservableObject {
             // Settings is a detour, never the panel to come back to.
             guard activePanel != .settings else { return }
             lastContentPanel = activePanel
-            if activePanel.isList { lastListPanel = activePanel }
+            if keyboardPanels[activePanel]?.rowIDs != nil { lastListPanel = activePanel }
             // Previews build throwaway models; they must not overwrite the
             // user's real last panel.
             if !PreviewMode.active {
@@ -36,6 +36,13 @@ final class IslandModel: ObservableObject {
     /// The last panel that was a list; where the keyboard lands when the panel it was
     /// otherwise about to open has no rows to drive.
     private var lastListPanel = PanelID.clipboard
+
+    /// One keyboard conformance per panel, filled at the end of `init`.
+    ///
+    /// The model asks this dictionary rather than switching on `PanelID`, so a panel's
+    /// rows and its `↩` behaviour live together in one file and a new panel cannot
+    /// half-join the navigation.
+    private(set) var keyboardPanels: [PanelID: PanelKeyboard] = [:]
 
     /// Hides the per-panel controls — the history windows and the Autopaste pill —
     /// and the Frequent row, leaving each history panel as just its list. The
@@ -77,16 +84,16 @@ final class IslandModel: ObservableObject {
 
     /// Where the keyboard lands when it is opened from the toggle key.
     ///
-    /// `panelOnOpen` when that is a list, because opening where the user last was is
-    /// the point of `reopensLastPanel`. Otherwise the last panel that had rows: an
-    /// island opened into keyboard mode on Music would take the arrows and offer
-    /// nothing for them to move, which reads as the keys having been stolen.
+    /// `panelOnOpen` when that panel holds a list, because opening where the user last
+    /// was is the point of `reopensLastPanel`. Otherwise the last panel that did: a
+    /// panel with no list has no first row to select, so the highlight would have
+    /// nowhere to go. Music is a navigation target, not a landing one.
     var keyboardLandingPanel: PanelID {
-        // An island that is already up arms where it is: the user is looking at a
+        // An island that is already up lands where it is: the user is looking at a
         // panel, and moving them off it would be a change they did not ask for. A
         // closed island has not chosen yet, so it follows `panelOnOpen`.
         let target = expanded ? activePanel : panelOnOpen
-        return target.isList ? target : lastListPanel
+        return keyboardPanels[target]?.rowIDs != nil ? target : lastListPanel
     }
 
     /// Set by a provider when its panel is degraded — e.g. terminal history
@@ -231,9 +238,9 @@ final class IslandModel: ObservableObject {
     /// one. Hover does not, because there is no row to highlight until the user
     /// reaches for the keyboard.
     func beginKeyboardMode(on panel: PanelID) {
-        guard panel.isList else { return }
+        guard let rows = keyboardPanels[panel]?.rowIDs else { return }
         activePanel = panel
-        listSelection = ListSelection(panel: panel, id: rowID(of: panel, at: 0))
+        listSelection = ListSelection(panel: panel, id: rows.first ?? "")
     }
 
     /// Drops the highlight.
@@ -246,40 +253,36 @@ final class IslandModel: ObservableObject {
         listSelection = nil
     }
 
-    /// Moves the highlight, creating it on the first press.
+    /// `↑` / `↓` on the panel that is showing. The panel decides what that means:
+    /// a history list moves its highlight, the shelf moves through files, and the
+    /// Music panel changes the volume.
+    func moveVertical(by step: Int) {
+        keyboardPanels[activePanel]?.moveVertical(step)
+    }
+
+    /// Moves a list panel's highlight, creating it on the first press.
     ///
     /// `↓` from nothing lands on the first row rather than the second, so the first
     /// key the user presses is the one that makes the selection appear. That is what
     /// lets a merely hovered island stay unhighlighted.
-    func moveSelection(by step: Int) {
-        let panel = listSelection?.panel ?? activePanel
-        guard panel.isList else { return }
-        let count = rowCount(of: panel)
-        guard count > 0 else { return }
+    func moveSelection(in panel: PanelID, by step: Int) {
+        guard let rows = keyboardPanels[panel]?.rowIDs, !rows.isEmpty else { return }
         // A vanished id — the row aged out of the window, or was removed — lands on
         // the first row whichever way the user was going.
-        let base = selectedRowIndex ?? (step > 0 ? -1 : 0)
-        let next = min(max(base + step, 0), count - 1)
-        listSelection = ListSelection(panel: panel, id: rowID(of: panel, at: next))
+        let base = listSelection.flatMap { rows.firstIndex(of: $0.id) } ?? (step > 0 ? -1 : 0)
+        let next = min(max(base + step, 0), rows.count - 1)
+        listSelection = ListSelection(panel: panel, id: rows[next])
     }
 
-    /// Puts one row on the pasteboard and pastes it, as clicking it does.
+    /// Activates one row of `panel`, as clicking it does.
     ///
-    /// The single place the two lists differ. It has to be a switch and cannot be
-    /// generalised further: a clipboard row must bump its frecency, and a terminal
-    /// command must not be written into clipboard history — so each keeps its own
-    /// paste method, and this is the six lines that choose between them.
+    /// One call for the mouse and the keyboard, and the panel decides what it means:
+    /// a clipboard row pastes and bumps its frecency, a terminal command pastes
+    /// without entering clipboard history, a shelf row opens the file. The differences
+    /// live in `PanelKeyboard`, one conformance each, rather than in a `switch` here
+    /// that every new panel has to edit.
     func paste(panel: PanelID, rowID: String, autoPaste: Bool) {
-        switch panel {
-        case .clipboard:
-            guard let entry = clipboard.visible.first(where: { $0.id == rowID }) else { return }
-            pasteClipboard(entry, autoPaste: autoPaste)
-        case .terminal:
-            guard let entry = terminal.visible.first(where: { $0.id == rowID }) else { return }
-            pasteTerminal(entry, autoPaste: autoPaste)
-        default:
-            break
-        }
+        keyboardPanels[panel]?.activate(rowID, autoPaste: autoPaste)
     }
 
     /// Pastes the selected row.
@@ -301,39 +304,11 @@ final class IslandModel: ObservableObject {
     /// The selected row's id, or nil when there is not one: no row selected, or an
     /// empty list, whose placeholder id matches nothing.
     private var selectedRowID: String? {
-        guard let selection = listSelection, selectedRowIndex != nil else { return nil }
+        guard let selection = listSelection,
+              let rows = keyboardPanels[selection.panel]?.rowIDs,
+              rows.contains(selection.id)
+        else { return nil }
         return selection.id
-    }
-
-    /// Index of the selected row in its own list, derived rather than stored.
-    private var selectedRowIndex: Int? {
-        guard let selection = listSelection else { return nil }
-        switch selection.panel {
-        case .clipboard: return clipboard.visible.firstIndex { $0.id == selection.id }
-        case .terminal: return terminal.visible.firstIndex { $0.id == selection.id }
-        default: return nil
-        }
-    }
-
-    private func rowCount(of panel: PanelID) -> Int {
-        switch panel {
-        case .clipboard: return clipboard.visible.count
-        case .terminal: return terminal.visible.count
-        default: return 0
-        }
-    }
-
-    private func rowID(of panel: PanelID, at index: Int) -> String {
-        switch panel {
-        case .clipboard:
-            let rows = clipboard.visible
-            return rows.indices.contains(index) ? rows[index].id : ""
-        case .terminal:
-            let rows = terminal.visible
-            return rows.indices.contains(index) ? rows[index].id : ""
-        default:
-            return ""
-        }
     }
 
     /// Follows the highlight to whichever panel the user navigated to.
@@ -348,11 +323,11 @@ final class IslandModel: ObservableObject {
     /// to another one is an ordinary move.
     private func retargetSelection(to panel: PanelID) {
         guard listSelection != nil else { return }
-        guard panel.isList else {
+        guard let rows = keyboardPanels[panel]?.rowIDs else {
             listSelection = nil
             return
         }
-        listSelection = ListSelection(panel: panel, id: rowID(of: panel, at: 0))
+        listSelection = ListSelection(panel: panel, id: rows.first ?? "")
     }
 
     private var cancellables = Set<AnyCancellable>()
@@ -383,6 +358,16 @@ final class IslandModel: ObservableObject {
         case let stored?: self.clipboardShortcut = ClipboardShortcut(rawValue: stored) ?? .default
         }
         self.terminal = TerminalService(rules: ignoreRules)
+
+        // Registered here rather than by `PanelHost`, because everything below the
+        // protocol is this object's own state. Assigning at the end of `init` is also
+        // what lets each conformance take `self` without a lazy dance.
+        self.keyboardPanels = [
+            .clipboard: ClipboardKeyboard(model: self),
+            .terminal: TerminalKeyboard(model: self),
+            .shelf: ShelfKeyboard(model: self),
+            .music: MusicKeyboard(model: self)
+        ]
 
         player.$nowPlaying
             .receive(on: RunLoop.main)
@@ -505,21 +490,27 @@ final class IslandModel: ObservableObject {
         }
     }
 
-    /// Moves to the next or previous **list** panel, wrapping between the two.
+    /// Moves to the next or previous panel that can be driven from the keyboard.
     ///
-    /// The only cycling left. It does not walk every panel, and cannot: reaching Shelf
-    /// or Music would end the mode, which is the opposite of what an arrow press is
-    /// asking for. Deriving it from `PanelID.allCases` would also make the destination
-    /// depend on declaration order, which is a display concern.
+    /// The order is `PanelID.contentPanels` — the panels as they appear on screen —
+    /// filtered to the ones with a keyboard conformance, so the arrows iterate what
+    /// the user can actually see rather than a list somebody maintained by hand.
+    /// Settings is not in `contentPanels`, which is why `←`/`→` step over it.
     ///
-    /// This replaced `cyclePanel`, which walked all five panels for the `⌃⌥←/→` and
-    /// `⌥Tab` chords. Both are gone: panels are reachable by number at any time, and by
-    /// arrow once the mode is armed.
-    func cycleListPanel(by step: Int) {
-        let lists: [PanelID] = [.clipboard, .terminal]
-        guard let index = lists.firstIndex(of: activePanel) else { return }
-        let next = (index + step + lists.count) % lists.count
-        selectPanel(lists[next])
+    /// This replaced a version that walked `allCases` for the `⌃⌥←/→` and `⌥Tab`
+    /// chords, and a second that hardcoded `[.clipboard, .terminal]`. The first
+    /// depended on declaration order; the second had to be edited whenever a panel
+    /// learned to take the keyboard.
+    func cyclePanel(by step: Int) {
+        let panels = navigablePanels
+        guard !panels.isEmpty, let index = panels.firstIndex(of: activePanel) else { return }
+        let next = (index + step + panels.count) % panels.count
+        selectPanel(panels[next])
+    }
+
+    /// The panels `←`/`→` step through, in display order.
+    var navigablePanels: [PanelID] {
+        PanelID.contentPanels.filter { keyboardPanels[$0] != nil }
     }
 
     // MARK: - Clipboard

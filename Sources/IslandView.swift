@@ -502,11 +502,23 @@ struct ShelfPanel: View {
     }
 
     private var list: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            LazyVStack(spacing: 1) {
-                ForEach(shelf.items) { item in
-                    ShelfRow(item: item, model: model, shelf: shelf)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 1) {
+                    ForEach(shelf.items) { item in
+                        ShelfRow(item: item, model: model, shelf: shelf)
+                            // The keyboard's row id is the UUID string, so the row has
+                            // to be addressable by that rather than by `ShelfItem`'s
+                            // own `id`, which is a `UUID` and would never match.
+                            .id(item.id.uuidString)
+                    }
                 }
+            }
+            // Follows the selection, scrolling only as far as it takes to show it —
+            // the same rule the two history lists use.
+            .onChange(of: model.listSelection) { _, selection in
+                guard let selection, selection.panel == .shelf else { return }
+                proxy.scrollTo(selection.id)
             }
         }
     }
@@ -533,6 +545,10 @@ struct ShelfRow: View {
     let shelf: ShelfStore
 
     @State private var hovering = false
+
+    /// A step brighter than hover, so the two can be told apart when the pointer
+    /// happens to rest on a different row. Same values as `HistoryRow`.
+    private var selected: Bool { model.isSelected(.shelf, id: item.id.uuidString) }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -569,7 +585,7 @@ struct ShelfRow: View {
         .frame(height: 30)
         .background(
             RoundedRectangle(cornerRadius: IslandMetrics.rowRadius, style: .continuous)
-                .fill(.white.opacity(hovering ? 0.06 : 0))
+                .fill(.white.opacity(selected ? 0.11 : hovering ? 0.06 : 0))
         )
         .overlay {
             GeometryReader { geometry in
