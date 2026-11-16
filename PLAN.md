@@ -209,8 +209,8 @@ The band is measured from `activePanel.preferredSize`, not from the window, so t
 icons stay put even while the window is still the larger of the two sizes.
 
 **Keyboard shortcuts**, because the pointer is often nowhere near the notch:
-`⌃⌥↓` opens the island on its last list, `⌥1`–`⌥5` jump straight to a panel in
-display order, and `⌃⌘V` / `⌥⇧⌘T` open straight onto a history list (§3).
+`⌘⌥↓` opens the island on its last list, `⌥1`–`⌥5` jump straight to a panel in
+display order, and `⌃⌘V` / `⌘⌥B` open straight onto a history list (§3).
 `⌘1`–`⌘5` is what the hand reaches for and what the system takes first — ⌘-number
 and ⌃-number are claimed by tab switching and Spaces before a Carbon hotkey is
 consulted, so both the original `⌥⌘1`–`⌥⌘4` set and the later `⌘`-number attempt
@@ -224,7 +224,7 @@ groups**, each alive only while it can mean something:
 
 | Group | Lifetime | Contents |
 | --- | --- | --- |
-| always | the process | `⌃⌥↓`; the clipboard shortcut when it is on; `⌥⇧⌘T` |
+| always | the process | `⌘⌥↓`; the clipboard shortcut when it is on; `⌘⌥B` |
 | panel | while expanded | `⌥1`–`⌥5` |
 | mode | while expanded | `←`, `→`, `↑`, `↓`, `↩`, `⌤`, `⎋` |
 
@@ -253,7 +253,7 @@ island was open). Panels are reachable by number at any time, or by arrow.
 
 **Measured, macOS 26: registration success is not evidence of availability.**
 `RegisterEventHotKey` returns `noErr` and a usable reference for a chord another
-process already holds — `⌃⌥↓` registered while a second copy of this app held it, and
+process already holds — `⌃⌥↓` (the open key at the time) registered while a second copy of this app held it, and
 the same chord registered twice inside one process. It returns `noErr` for chords the
 system itself owns: `⌘Space` (Spotlight), `⌃↑` (Mission Control) and `⌘⇥` (the app
 switcher). The return value therefore cannot be used to tell someone their shortcut
@@ -471,9 +471,9 @@ modelled on Windows' ⊞V:
 
 | Key | Does |
 | --- | --- |
-| `⌃⌥↓` | Opens the island on the last list with its first row selected; closes it when it is already up |
+| `⌘⌥↓` | Opens the island on the last list with its first row selected; closes it when it is already up |
 | `⌃⌘V` | Opens on the clipboard, first row selected |
-| `⌥⇧⌘T` | Opens on the terminal list, first row selected |
+| `⌘⌥B` | Opens on the terminal list, first row selected |
 | `←` / `→` | Step between the four content panels |
 | `↑` / `↓` | The panel's own: the highlighted row, or the volume on Music |
 | `⌥1`–`⌥5` | Jump to a panel, in display order |
@@ -1573,7 +1573,7 @@ One line per file, so a reviewer can go straight to the part they care about.
 | `IslandModel.swift` | All state: panel selection, last-panel preference, geometry, the row highlight and panel navigation, paste delivery, `PlayerService` (sources, polling, toast). The only `ObservableObject` the views observe besides the services |
 | `IslandView.swift` | `IslandRootView`, `NotchShape`, `IslandMetrics`, the shell, the shelf/music/settings panels, the toast, the chips/pills/picker views, `AgeView` |
 | `Panels.swift` | `PanelID` (sizes, symbols, order, `contentPanels`), `PanelProvider` protocol, `PanelHost` lifecycle, the five providers |
-| `HotKeys.swift` | Carbon `RegisterEventHotKey`, three groups: `⌃⌥↓` + clipboard shortcut + `⌥⇧⌘T` (process lifetime), `⌥1–5` (while expanded), `←`/`→`/`↑`/`↓`/`↩`/`⌤`/`⎋` (while expanded). `ClipboardShortcut` presets |
+| `HotKeys.swift` | Carbon `RegisterEventHotKey`, three groups: `⌘⌥↓` + clipboard shortcut + `⌘⌥B` (process lifetime), `⌥1–5` (while expanded), `←`/`→`/`↑`/`↓`/`↩`/`⌤`/`⎋` (while expanded). `ClipboardShortcut` presets |
 | `PanelKeyboard.swift` | One conformance per panel saying what its rows are, what `↑`/`↓` do and what `↩` does. Replaced four `switch`es and a hardcoded panel list |
 | `SystemVolume.swift` | CoreAudio volume on the default output device, for `↑`/`↓` on Music. System volume, not per-app — MediaRemote has no volume to offer |
 | `FullscreenSupport.swift` | SkyLight space attach so the island survives fullscreen Spaces |
@@ -1722,7 +1722,7 @@ together.
 arm64-apple-macos26.0 -framework AppKit -framework SwiftUI Sources/*.swift` after
 each commit. That is the whole of it: nothing in this pass has been run on a notched
 display, so everything in *Using it* about the keyboard selection is design intent
-until it is. The verification list is in `README.md`'s own terms: `⌃⌥↓` from another
+until it is. The verification list is in `README.md`'s own terms: `⌘⌥↓` from another
 app, `⌥1`–`⌥5`, the mode's keys only while armed, `⌃⌘V` while closed, focus staying
 in the original app, every exit unregistering them, a mid-selection copy not moving
 the highlight, and a move-only drag being refused.
@@ -1781,9 +1781,9 @@ conformance — the order they appear on screen, minus Settings.
 
 | Key | When | Does |
 | --- | --- | --- |
-| `⌃⌥↓` | always | open on the last list with its first row selected · close |
+| `⌘⌥↓` | always | open on the last list with its first row selected · close |
 | `⌃⌘V` | always | open on the clipboard, first row selected |
-| `⌥⇧⌘T` | always | open on the terminal list, first row selected |
+| `⌘⌥B` | always | open on the terminal list, first row selected |
 | `⌥1`–`⌥5` | while expanded | jump to a panel; `⌥5` reaches Settings |
 | `←` / `→` | while expanded | step between the four content panels |
 | `↑` / `↓` | while expanded | the panel's own: rows on a list or the shelf, volume on Music |
@@ -1791,7 +1791,7 @@ conformance — the order they appear on screen, minus Settings.
 | `⎋` | while expanded | close |
 
 The named shortcuts no longer toggle. `⌃⌘V` on an island the pointer already holds open
-means "show me the clipboard" and closes nothing; `⎋` and `⌃⌥↓` are the close keys. A
+means "show me the clipboard" and closes nothing; `⎋` and `⌘⌥↓` are the close keys. A
 key that sometimes closed the window was fine while the island was pointer-only and is
 a trap now that hovering opens it.
 
@@ -1801,11 +1801,16 @@ was reconsidered: `⌃C` is SIGINT in a terminal and the mode is armed exactly w
 terminal is focused, and `⌘C` was unnecessary once `↩` writes the pasteboard on its
 way to pasting. ⌥-click still copies without pasting.
 
-`⌥⇧⌘T` rather than `⇧⌘T` or `⌃⌘T`: `⇧⌘T` is Reopen Closed Tab in three browsers and two
-editors, which is the `⇧⌘V` mistake again; `⌃⌘T` is free and symmetric with `⌃⌘V` and was
-offered instead. Three modifiers buy freedom from collision at the cost of one-handed
-reach. **Free is not measured** — it is "no documented shortcut I know of", the same
-distinction this plan draws everywhere else.
+`⌘⌥B` rather than `⇧⌘T` or `⌃⌘T`: `⇧⌘T` is Reopen Closed Tab in three browsers and two
+editors, which is the `⇧⌘V` mistake again. `⌃⌘T` is free and symmetric with `⌃⌘V` and was
+offered; `⌘⌥B` was chosen instead. It costs Safari's Show Bookmarks, which is a rarer
+chord than any of the alternatives. **Free is not measured** — it is "no documented
+shortcut I know of", the same distinction this plan draws everywhere else.
+
+It is switchable from the Settings panel and the status menu, because a chord
+registered for the life of the process should be refusable. The **open key** is not:
+`⌘⌥↓` costs Insert Cursor Below in VS Code and its forks, and that is worth knowing
+before somebody presses it there and finds the island.
 
 ### The invariant
 
@@ -1835,7 +1840,7 @@ that is the inconsistency this section exists to remove.
 | `RegisterEventHotKey` still returns `noErr` for taken and system chords | **measured** (§2) — unchanged by this work |
 | Registration follows `expanded` | **observed** — hovering then pressing `←`/`→`/`↑`/`↓` did nothing in the build *before* this change; see the round-2 notes in the implementation record |
 | Every exit unregisters the mode's keys | **design intent** — untested; the exit list is `collapse()` and a non-list panel |
-| `⌥⇧⌘T` is free | **not measured** — no documented shortcut I know of, which is a weaker claim than the `RegisterEventHotKey` findings above |
+| `⌘⌥B` costs Safari's Show Bookmarks; `⌘⌥↓` costs VS Code's Insert Cursor Below | **known conflicts**, from the apps' own documentation rather than measured here |
 | `↑`/`↓` on Music changes the system volume | **unverified** — needs hardware |
 | A held `↓` repeats | **unknown** — Carbon may deliver one event per down-stroke |
 | The mode's arrows reach an empty list without ending it | **by construction** — `retargetSelection` keeps the `""` id |
@@ -1849,7 +1854,7 @@ this branch has been through a launch.
   moves one row per press and this needs a timer. This is the first thing to test.
 - **`⌃⌘V` no longer puts the panel back.** The mode used to restore the panel it
   detoured from; that was deleted with `endKeyboardSelection`. Because `activePanel`
-  persists, a shortcut detour now moves the panel hover reopens on. `⌃⌥↓` has the same
+  persists, a shortcut detour now moves the panel hover reopens on. `⌘⌥↓` has the same
   effect and it is intended there. Undecided whether it should be for `⌃⌘V`.
 - **The two recordings predate this.** Both GIFs are captioned with `⌃⌥→`, and
   `docs/panel-tour.gif` walks Clipboard → Terminal → Shelf → Music, which the arrows

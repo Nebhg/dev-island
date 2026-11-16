@@ -189,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(shortcutItem)
 
         menu.addItem(makeItem(Self.cleanLayoutTitle, #selector(toggleCleanLayout)))
+        menu.addItem(makeItem(Self.terminalShortcutTitle, #selector(toggleTerminalShortcut)))
 
         menu.addItem(.separator())
         menu.addItem(makeItem("Edit Ignore Rules…", #selector(editIgnoreRules)))
@@ -205,6 +206,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func expand() { controller?.expandWithoutPointer() }
+    @objc private func toggleTerminalShortcut() {
+        controller?.terminalShortcutEnabled.toggle()
+    }
+
     @objc private func quit() { NSApp.terminate(nil) }
     @objc private func editIgnoreRules() { controller?.editIgnoreRules() }
 
@@ -222,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let shortcutMenuTitle = "Clipboard Shortcut"
     private static let cleanLayoutTitle = "Clean Layout"
+    private static let terminalShortcutTitle = "Terminal Shortcut (⌘⌥B)"
 
     @objc private func toggleCleanLayout() {
         controller?.cleanLayout.toggle()
@@ -249,6 +255,8 @@ extension AppDelegate: NSMenuDelegate {
 
         menu.items.first(where: { $0.title == Self.cleanLayoutTitle })?.state =
             controller?.cleanLayout == true ? .on : .off
+        menu.items.first(where: { $0.title == Self.terminalShortcutTitle })?.state =
+            controller?.terminalShortcutEnabled == true ? .on : .off
 
         // Which preset is in use, and nothing about whether the chord was actually
         // free: `RegisterEventHotKey` returns `noErr` even for a chord another app

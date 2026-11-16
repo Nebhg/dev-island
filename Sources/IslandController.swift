@@ -143,7 +143,6 @@ final class IslandController {
         }
         hotKeys.onModeKey = { [weak self] key in self?.handleModeKey(key) }
         hotKeys.installToggle()
-        hotKeys.installTerminalShortcut()
 
         dropView.canAccept = { [weak model] in model?.expanded == true }
         dropView.onTargetChange = { [weak model] targeted in
@@ -239,6 +238,19 @@ final class IslandController {
                     self?.hotKeys.installModeKeys()
                 } else {
                     self?.hotKeys.uninstallModeKeys()
+                }
+            }
+            .store(in: &cancellables)
+
+        // Emits on subscribe, which is what registers the terminal shortcut at launch
+        // and unregisters it if the setting is switched off.
+        model.$terminalShortcutEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                if enabled {
+                    self?.hotKeys.installTerminalShortcut()
+                } else {
+                    self?.hotKeys.uninstallTerminalShortcut()
                 }
             }
             .store(in: &cancellables)
@@ -367,6 +379,12 @@ final class IslandController {
     var reopensLastPanel: Bool {
         get { model.reopensLastPanel }
         set { model.reopensLastPanel = newValue }
+    }
+
+    /// Exposed for the Settings row and the status item.
+    var terminalShortcutEnabled: Bool {
+        get { model.terminalShortcutEnabled }
+        set { model.terminalShortcutEnabled = newValue }
     }
 
     /// Exposed for the status item's "Clipboard Shortcut" submenu.

@@ -191,6 +191,14 @@ final class IslandModel: ObservableObject {
 
     /// The global shortcut that opens the keyboard selection; nil when switched off.
     /// Persisted.
+    /// Whether `⌘⌥B` opens the terminal list. Persisted; on by default. The chord is
+    /// fixed, so this is the whole of the Terminal Shortcut setting: on or off.
+    @Published var terminalShortcutEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(terminalShortcutEnabled, forKey: Self.terminalShortcutKey)
+        }
+    }
+
     @Published var clipboardShortcut: ClipboardShortcut? {
         didSet {
             UserDefaults.standard.set(clipboardShortcut?.rawValue ?? Self.shortcutOff, forKey: Self.clipboardShortcutKey)
@@ -198,6 +206,7 @@ final class IslandModel: ObservableObject {
     }
 
     private static let clipboardShortcutKey = "clipboardShortcut"
+    private static let terminalShortcutKey = "terminalShortcutEnabled"
     private static let shortcutOff = "off"
 
     /// A history row being driven from the keyboard. Like Windows' ⊞V: the island
@@ -357,6 +366,8 @@ final class IslandModel: ObservableObject {
         case Self.shortcutOff: self.clipboardShortcut = nil
         case let stored?: self.clipboardShortcut = ClipboardShortcut(rawValue: stored) ?? .default
         }
+        self.terminalShortcutEnabled =
+            UserDefaults.standard.object(forKey: Self.terminalShortcutKey) as? Bool ?? true
         self.terminal = TerminalService(rules: ignoreRules)
 
         // Registered here rather than by `PanelHost`, because everything below the

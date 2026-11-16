@@ -11,9 +11,11 @@ import Foundation
 /// and no volume, and the app is a now-playing reader rather than an audio client, so
 /// there is no per-app volume to adjust even in principle.
 ///
-/// Unverified on hardware: this cannot be tested without a display, and a device that
-/// reports no settable volume element fails silently by design — the alternative is a
-/// dialog nobody asked for.
+/// Unverified on hardware. A device that reports no settable volume element does
+/// nothing at all, deliberately: the alternative is a dialog raised by an arrow key.
+/// The three things that make it no-op are worth knowing when it appears broken — no
+/// default output device, no element that reports itself settable, or no element that
+/// can be read back — and each is a separate early return for that reason.
 enum SystemVolume {
     /// One arrow press. Sixteen steps end to end, which is roughly one notch of the
     /// system HUD per step.
@@ -22,8 +24,11 @@ enum SystemVolume {
     static func adjust(by delta: Float) {
         guard let device = defaultOutputDevice else { return }
         let elements = settableElements(of: device)
-        guard let first = elements.first,
-              let current = volume(of: device, element: first)
+        // Read from the first element that actually answers, not from the first in
+        // the list. A device can advertise a settable main element and still refuse
+        // to be read, and taking the head of the list would then fail the whole
+        // adjustment while the two channels beside it were perfectly usable.
+        guard let current = elements.lazy.compactMap({ volume(of: device, element: $0) }).first
         else { return }
         let next = min(max(current + delta * step, 0), 1)
         // Written to every element that takes one. A stereo device exposes its two

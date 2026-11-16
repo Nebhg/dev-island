@@ -863,6 +863,9 @@ struct SettingsPanel: View {
                     select: { model.clipboardShortcut = $0 }
                 )
             }
+            row("Terminal shortcut", hint: "⌘⌥B opens the terminal anywhere") {
+                onOff(model.terminalShortcutEnabled) { model.terminalShortcutEnabled = $0 }
+            }
             row("Clipboard history", hint: "How far back the list goes") {
                 windowPicker(clipboard.window) { clipboard.window = $0 }
             }

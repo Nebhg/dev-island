@@ -68,7 +68,7 @@ enum PanelID: String, CaseIterable, Identifiable {
 
     /// Settings rows: a label with a one-line hint under it, and a control.
     static let settingsRowHeight: CGFloat = 34
-    static let settingsRowCount = 6
+    static let settingsRowCount = 7
 
     /// The switcher band, the panel padding above and below, and the rows with a
     /// 1 pt gap between them — the same gap the history lists use.

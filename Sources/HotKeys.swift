@@ -41,9 +41,8 @@ enum ClipboardShortcut: String, CaseIterable {
 ///
 /// Three groups, each registered only while it can mean something:
 ///
-/// - **always** — `⌃⌥↓`, the clipboard shortcut and the terminal shortcut. All three
-///   have to work while the island is shut, since a closed island is exactly when
-///   they are needed.
+/// - **always** — `⌘⌥↓`, the clipboard shortcut and `⌘⌥B`. All three have to work
+///   while the island is shut, since a closed island is exactly when they are needed.
 /// - **panel** — `⌥1`–`⌥5`, while the island is open.
 /// - **mode** — `←`, `→`, `↑`, `↓`, `↩`, `⌤` and `⎋`, while the island is open. These
 ///   are the only chords here with no modifier, which is why their lifetime is tied
@@ -119,9 +118,8 @@ final class HotKeys {
         let modifiers: UInt32
     }
 
-    /// `⌥1`–`⌥5` jump straight to a panel, in `PanelID.allCases` order. `⌃⌥↓` opens
-    /// the island and `←`/`→` cycle panels once it is being driven from the keyboard;
-    /// neither lives in this group.
+    /// `⌥1`–`⌥5` jump straight to a panel, in `PanelID.allCases` order. `⌘⌥↓` opens
+    /// the island and `←`/`→` cycle panels once it is up; neither lives in this group.
     ///
     /// `⌘1`–`⌘5` is the obvious choice and the wrong one: macOS and most apps claim
     /// `⌘`-number and `⌃`-number first (tab switching, Spaces), and those win before
@@ -146,16 +144,19 @@ final class HotKeys {
         Key(slot: .panel5, keyCode: UInt32(kVK_ANSI_5), modifiers: UInt32(optionKey))
     ]
 
-    /// `⌃⌥↓` toggles the island.
+    /// `⌘⌥↓` toggles the island.
     ///
     /// This one is registered at launch and never unregistered, so it cannot be a
     /// bare `⌥↓`: that is next-paragraph in every text editor, and stealing it
     /// permanently would be a much worse trade than the panel keys, which only
     /// exist while the island is already open.
+    ///
+    /// `⌘⌥↓` is also Insert Cursor Below in VS Code and its forks, which is the one
+    /// cost this chord has and the reason it is worth knowing about before choosing it.
     private static let toggleKey = Key(
         slot: .toggle,
         keyCode: UInt32(kVK_DownArrow),
-        modifiers: UInt32(controlKey | optionKey)
+        modifiers: UInt32(cmdKey | optionKey)
     )
 
     /// Navigation and dismissal, while the island is being driven from the keyboard.
@@ -229,21 +230,29 @@ final class HotKeys {
         modeRefs.removeAll()
     }
 
-    /// Registers `⌥⇧⌘T`: open the island on the terminal history.
+    /// Registers `⌘⌥B`: open the island on the terminal history.
     ///
     /// Fixed rather than following the clipboard preset. A preset that moved both
-    /// chords would offer `⇧⌘V` / `⇧⌘T` — and `⇧⌘T` is Reopen Closed Tab in three
-    /// browsers and two editors, which is the same objection that took `⇧⌘V` off the
-    /// clipboard. Two modifiers on one shortcut and three on the other is asymmetric
-    /// and deliberate: only one of them has a free choice, so only one takes it.
+    /// chords would offer `⇧⌘V` / `⇧⌘T`, and `⇧⌘T` is Reopen Closed Tab in three
+    /// browsers and two editors — the same objection that took `⇧⌘V` off the clipboard.
+    /// Only the clipboard shortcut is configurable, because only it had a free choice.
+    ///
+    /// `⌘⌥B` costs Safari's Show Bookmarks. B rather than T because `⌘⌥T` is the
+    /// toolbar chord in several apps and because the panel is "Terminal" only to
+    /// whoever reads the label.
     func installTerminalShortcut() {
         installEventHandler()
         guard terminalRef == nil else { return }
         terminalRef = register(Key(
             slot: .terminalShortcut,
-            keyCode: UInt32(kVK_ANSI_T),
-            modifiers: UInt32(optionKey | shiftKey | cmdKey)
+            keyCode: UInt32(kVK_ANSI_B),
+            modifiers: UInt32(cmdKey | optionKey)
         ))
+    }
+
+    func uninstallTerminalShortcut() {
+        if let terminalRef { UnregisterEventHotKey(terminalRef) }
+        terminalRef = nil
     }
 
     /// Replaces the clipboard shortcut; nil switches it off.

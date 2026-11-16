@@ -7,7 +7,7 @@ that appear while the island is closed.
 
 ![Clicking a clipboard row pastes it into the app you came from](docs/autopaste.gif)
 
-*A click pastes into whatever had focus; the toast under the notch says so. `⌃⌥↓`
+*A click pastes into whatever had focus; the toast under the notch says so. `⌘⌥↓`
 opens it from the keyboard, `⌃⌘V` lands on the clipboard.*
 
 Source-only: there are no release binaries. Build it with `./build.sh` (below).
@@ -39,12 +39,13 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
   opens the file, or plays and pauses. `⎋` closes.
   `← → ↑ ↓ ↩ ⌤ ⎋` carry no modifier, so they are taken from every app for as long as
   the island is up — which is why it closes as soon as the pointer leaves.
-- **Open from the keyboard** with `⌃⌥↓`, or land directly on a list: `⌃⌘V` for the
-  clipboard, `⌥⇧⌘T` for the terminal. Each one highlights the first row so it can be
-  acted on without moving the pointer. Change or switch off the clipboard shortcut in
+- **Open from the keyboard** with `⌘⌥↓`, or land directly on a list: `⌃⌘V` for the
+  clipboard, `⌘⌥B` for the terminal. Each one highlights the first row so it can be
+  acted on without moving the pointer. The clipboard shortcut's chord is chosen in
   Settings or under **Clipboard Shortcut** in the menu capsule; the terminal one is
-  fixed, because `⇧⌘T` — the chord a preset would offer — is Reopen Closed Tab in three
-  browsers and two editors.
+  fixed at `⌘⌥B` and can only be switched off, under **Terminal Shortcut**. `⌘⌥↓`
+  costs Insert Cursor Below in VS Code, and `⌘⌥B` costs Show Bookmarks in Safari —
+  both are registered for the life of the process.
 - **Switch panels** with the icons either side of the cutout, `⌥1`–`⌥5`, or `←` / `→`
   while the island is up. The arrows cycle the four content panels; `⌥5` reaches
   Settings, which the arrows step over.
@@ -60,11 +61,11 @@ Source-only: there are no release binaries. Build it with `./build.sh` (below).
   offers nothing but a move is refused rather than answered with a move that will
   not happen. Verified with Finder drags; a Dock stack such as Downloads carries
   the same pasteboard types and goes through the same path, but that is unverified.
-- **Settings** is the gear panel (`⌥5`): Clean layout, Autopaste, the clipboard
-  shortcut, both history windows, and which panel hover opens on (Last used, or
-  always one). **Clean layout** hides the history panels' filters and Frequent row,
-  leaving just the lists; it is off by default. The menu bar capsule has Default
-  Panel, Clipboard Shortcut and Clean Layout too.
+- **Settings** is the gear panel (`⌥5`): Clean layout, Autopaste, the clipboard and
+  terminal shortcuts, both history windows, and which panel hover opens on (Last
+  used, or always one). **Clean layout** hides the history panels' filters and
+  Frequent row, leaving just the lists; it is off by default. The menu bar capsule has
+  Default Panel, Clipboard Shortcut, Terminal Shortcut and Clean Layout too.
 - **Quit** from the capsule in the menu bar. There is deliberately no login item.
 
 Why the shortcuts sit on `⌃⌥` and `⌥` rather than `⌘1`–`⌘5` or `⌥⌘1`–`⌥⌘5` is

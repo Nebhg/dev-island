@@ -745,3 +745,50 @@ that makes the history worth keeping.
    press on Music should land back on Clipboard rather than stalling.
 5. **Shelf highlight and scroll.** The row is addressable by `.id(item.id.uuidString)`
    and the scroll is keyed on `model.listSelection`; both are new and neither has run.
+
+---
+
+## Round 3 — open key, terminal key, and the hover report
+
+### The hover report was a stale binary
+
+`~/Applications/Dev Island.app` was built at **19:53**; `109b867` (arm on hover) lands at
+**20:57**. The running process started at 21:02 but is executing that 19:53 binary, so
+the behaviour Ben saw was the pre-hover build — arrow keys working only after `⌃⌥↓`,
+which is exactly what phase 5 did. No code change was needed for it, and the check that
+settles it is `ps -o lstart=` against the binary's mtime, not a rebuild.
+
+### Key changes
+
+| | was | is |
+|---|---|---|
+| Open / close | `⌃⌥↓` | `⌘⌥↓` |
+| Terminal | `⌥⇧⌘T` | `⌘⌥B` |
+
+`⌘⌥↓` costs VS Code's Insert Cursor Below, and its forks inherit that. `⌘⌥B` costs
+Safari's Show Bookmarks. Both are registered for the life of the process, so both are
+trades rather than free chords — noted in the code and in `PLAN.md` §16, not hidden.
+
+The terminal chord stays out of the `ClipboardShortcut` preset on purpose: a preset
+would offer `⇧⌘V` / `⇧⌘T`, and `⇧⌘T` is Reopen Closed Tab in three browsers and two
+editors.
+
+### The terminal shortcut is now switchable
+
+New `@Published var terminalShortcutEnabled` (persisted, on by default), a Settings row
+("Terminal shortcut", `settingsRowCount` 6 → 7), and a status-menu item. It is the only
+way to refuse a chord that is otherwise fixed, and the open key cannot be refused — so
+if `⌘⌥↓` turns out to be a problem in an editor, the fix is another code change, not a
+setting. That asymmetry is deliberate: one of the two had a configurable preset already,
+so only one got a second control.
+
+### The volume, hardened before building
+
+Three separate `return`s in `SystemVolume.adjust` are now the documented failure modes
+(no default output device, no settable element, no readable element), and the read moved
+from *the first element in the list* to *the first element that answers*. A device can
+advertise a settable main element and still refuse to be read; taking the head of the
+list would then have failed the whole adjustment while the two channels beside it were
+usable. That is the bug worth catching before it is reported as "volume doesn't work".
+
+Still unverifiable here: whether any of it moves the volume on real hardware.
