@@ -965,19 +965,20 @@ struct SettingsPanel: View {
             control()
                 .layoutPriority(1)
         }
-        .padding(.leading, IslandMetrics.textInset)
-        .padding(.trailing, IslandMetrics.textInset - PillSize.regular.padding)
-        // The content is inset unevenly — the pill's own padding eats the right edge —
-        // so the row has to claim the full width before the highlight is painted, or
-        // the fill stops short of the panel edge and reads as a cropped band.
+        // Symmetric, and no longer subtracting the pill's own padding on the right:
+        // the highlight now owns the whole row and the content sits inside it, so a pill
+        // that reads as *selected* has clear space on both sides instead of touching the
+        // band's edge. The uneven inset was there to land the last pill's label on the
+        // text edge; it did that by pushing the fill to the row's edge, which is what
+        // made the highlight look cropped next to an "On".
+        .padding(.horizontal, IslandMetrics.textInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: PanelID.settingsRowHeight)
         .background(
-            // A step brighter than hover, same as `HistoryRow`, so the keyboard's row
-            // and the pointer's row can be told apart.
+            // Full row, edge to edge. A step brighter than hover, same as `HistoryRow`,
+            // so the keyboard's row and the pointer's row can be told apart.
             RoundedRectangle(cornerRadius: IslandMetrics.rowRadius, style: .continuous)
                 .fill(.white.opacity(selected ? 0.11 : 0))
-                .padding(.horizontal, 2)
         )
     }
 }

@@ -733,13 +733,15 @@ that makes the history worth keeping.
 
 ### Still to verify, in order of what would embarrass me most
 
+0. ~~The exit audit~~ — **confirmed by Ben**: the keys come back after every exit.
+   The release blocker from phase 5 onward is closed.
 1. **`↑`/`↓` on Music.** `SystemVolume` is untested against real hardware, and a
    device with no settable element fails silently. If the volume does not move, the
    first thing to check is whether any element reported settable — not the arithmetic.
 2. **The exit audit.** `⎋`, `↩`, a click away, `⌘Tab`. Any path that leaves
    `← → ↑ ↓ ↩ ⌤ ⎋` captured in the frontmost app is the release blocker it has been
    since phase 5.
-3. **Held-arrow repeat.** Still unmeasured. `SystemVolume` amplifies the problem: a
+3. ~~Held-arrow repeat~~ — **confirmed working and confirmed to feel right** at 60 ms. `SystemVolume` amplifies the problem: a
    non-repeating arrow means one sixteenth per press, which is slow to traverse.
 4. **`←`/`→` through four panels.** The order comes from `PanelID.contentPanels`, so a
    press on Music should land back on Clipboard rather than stalling.
@@ -900,3 +902,26 @@ background covers, not where the text sits.
 Hover arming, `⌘⌥B`, `↩` paste followed by working arrows, and the volume itself — the
 level moves, which was the thing the probe had already predicted and the build could not
 show.
+
+
+---
+
+## Round 6 — the highlight owns the row
+
+The pill's own horizontal padding was being subtracted from the row's trailing inset
+(`textInset - PillSize.regular.padding` = 0) so that the last pill's *label* landed on
+the panel's text edge. The side effect is that the pill's *fill* ran to the row's edge,
+and the highlight was inset 2 pt inside that — so an "On" pill sat 2 pt from the band
+and read as overhanging it.
+
+The row is now symmetric: `textInset` on both sides, content inside, highlight full
+bleed with no extra inset. The trade is that the pill grid sits 8 pt further from the
+right edge than it used to, so it no longer shares an edge with the section header text.
+That is the cost of the highlight reading as a row rather than a band behind the content,
+and it is the one Ben asked for.
+
+### Release status
+
+The exit audit — the blocker that has been open since phase 5 — is confirmed. The
+remaining unverified items are the ones that need different hardware or a longer soak,
+not different code.
