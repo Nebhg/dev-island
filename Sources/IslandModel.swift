@@ -205,16 +205,15 @@ final class IslandModel: ObservableObject {
         var id: String
     }
 
-    /// True while the island is being driven from the keyboard.
+    /// The row the keyboard is on, or nil when nothing is highlighted.
     ///
-    /// Separate from `listSelection`, and the separation is the point: the mode
-    /// outlives any particular row. An empty list is still "in the mode" with nothing
-    /// to paste, and an empty list must not be a reason to drop the keys — the arrows
-    /// can still reach the other one.
-    @Published private(set) var keyboardMode = false
-
-    /// Which row the mode is on. Nil whenever the mode is off, because it is armed on
-    /// a list panel and a switch to anything else ends it.
+    /// This is **not** the mode. The island is keyboard-driven whenever it is open —
+    /// its keys are registered on that basis, because a hovered island is one the
+    /// pointer is on, not one parked under a resting cursor. This is display state:
+    /// whether a row is drawn as selected.
+    ///
+    /// It is therefore created by the first arrow press rather than by opening, so a
+    /// hover does not put a highlight on a row the pointer is nowhere near.
     ///
     /// A row id of `""` means the list is empty. No entry's id can be that, so every
     /// lookup fails and the row keys do nothing — the empty-list behaviour, with no
@@ -226,44 +225,42 @@ final class IslandModel: ObservableObject {
         listSelection?.panel == panel && listSelection?.id == id
     }
 
-    /// Arms the mode on `panel`, with its first row selected.
+    /// Lands on `panel` with its first row selected.
     ///
-    /// `panel` has to be a list. The mode's keys are bare, so arming it somewhere they
-    /// cannot act would take those keys from every app and offer nothing in return —
-    /// no highlight, no paste, no visible reason the arrows stopped arriving.
+    /// The two named shortcuts use this: `⌃⌘V` for the clipboard, and the terminal
+    /// one. Hover does not, because there is no row to highlight until the user
+    /// reaches for the keyboard.
     func beginKeyboardMode(on panel: PanelID) {
         guard panel.isList else { return }
-        // Panel before flag: whoever observes `keyboardMode` to register keys must
-        // not see the mode on while the island is still showing the old panel.
         activePanel = panel
-        keyboardMode = true
         listSelection = ListSelection(panel: panel, id: rowID(of: panel, at: 0))
     }
 
-    /// The only place `keyboardMode` is cleared.
+    /// Drops the highlight.
     ///
-    /// Two callers, one assignment. `collapse()` covers every exit the user makes;
-    /// `retargetSelection` covers a panel change to something that is not a list. The
-    /// invariant that matters is that the bare keys cannot outlive the mode, and a
-    /// second assignment site is exactly how that invariant gets broken.
-    private func endKeyboardMode() {
-        // `@Published` fires on every assignment even when the value is unchanged,
-        // and `collapse()` runs on every hover-out. Skipping the no-op keeps the
-        // publish — and the view invalidation behind it — to the times it is real.
-        guard keyboardMode || listSelection != nil else { return }
-        keyboardMode = false
+    /// `@Published` fires on every assignment even when the value is unchanged, and
+    /// this runs on every collapse. The guard keeps a needless publish, and the view
+    /// invalidation behind it, off the hover path.
+    private func clearSelection() {
+        guard listSelection != nil else { return }
         listSelection = nil
     }
 
+    /// Moves the highlight, creating it on the first press.
+    ///
+    /// `↓` from nothing lands on the first row rather than the second, so the first
+    /// key the user presses is the one that makes the selection appear. That is what
+    /// lets a merely hovered island stay unhighlighted.
     func moveSelection(by step: Int) {
-        guard let selection = listSelection else { return }
-        let count = rowCount(of: selection.panel)
+        let panel = listSelection?.panel ?? activePanel
+        guard panel.isList else { return }
+        let count = rowCount(of: panel)
         guard count > 0 else { return }
         // A vanished id — the row aged out of the window, or was removed — lands on
         // the first row whichever way the user was going.
         let base = selectedRowIndex ?? (step > 0 ? -1 : 0)
         let next = min(max(base + step, 0), count - 1)
-        listSelection = ListSelection(panel: selection.panel, id: rowID(of: selection.panel, at: next))
+        listSelection = ListSelection(panel: panel, id: rowID(of: panel, at: next))
     }
 
     /// Puts one row on the pasteboard and pastes it, as clicking it does.
@@ -292,18 +289,12 @@ final class IslandModel: ObservableObject {
     /// first one does. ⌥-click on a row still copies without pasting, for the mouse —
     /// that path exists because the mouse has no Return to press.
     ///
-    /// The teardown is explicit rather than left to `collapse()`. The keys are only
-    /// safe because their lifetime is bounded, and reaching `endKeyboardMode` three
-    /// calls deep inside a function whose job is pasting is not a guarantee — it is a
-    /// coincidence that happens to hold today.
+    /// Nothing to paste is a no-op, not an exit. The island's keys are registered
+    /// because it is open, not because a row is selected, so there is no mode to end
+    /// here — and when something *is* selected the paste closes the island anyway,
+    /// which is what drops the highlight.
     func pasteSelection() {
-        guard let selection = listSelection, let row = selectedRowID else {
-            // Nothing selected, or an empty list: nothing to paste, but the mode still
-            // has to end or the keys stay registered.
-            endKeyboardMode()
-            return
-        }
-        endKeyboardMode()
+        guard let selection = listSelection, let row = selectedRowID else { return }
         paste(panel: selection.panel, rowID: row, autoPaste: true)
     }
 
@@ -345,17 +336,20 @@ final class IslandModel: ObservableObject {
         }
     }
 
-    /// Keeps the mode on a list. Switching to anything else — Settings, the shelf,
-    /// Music — ends it, because the mode's keys are bare and there is nothing on those
-    /// panels for them to act on.
+    /// Follows the highlight to whichever panel the user navigated to.
     ///
-    /// An **empty** list keeps the selection, with `""` as its id. Nothing matches, so
-    /// the row keys do nothing, but the mode survives: passing through an empty list
-    /// on the way to the other one is an ordinary move, not a reason to drop the keys.
+    /// With nothing selected there is nothing to retarget: switching panels by icon or
+    /// by `⌥`-number is not a request to put a highlight on a row. Once something is
+    /// selected, a panel change moves it to that panel's first row, or drops it when
+    /// the panel has no rows to hold one.
+    ///
+    /// An **empty** list keeps `""` as its id. Nothing matches, so the row keys do
+    /// nothing, but the highlight survives — passing through an empty list on the way
+    /// to another one is an ordinary move.
     private func retargetSelection(to panel: PanelID) {
-        guard keyboardMode else { return }
+        guard listSelection != nil else { return }
         guard panel.isList else {
-            endKeyboardMode()
+            listSelection = nil
             return
         }
         listSelection = ListSelection(panel: panel, id: rowID(of: panel, at: 0))
@@ -499,9 +493,8 @@ final class IslandModel: ObservableObject {
 
     func collapse() {
         // Above the guard, deliberately. A collapse that arrives with `expanded`
-        // already false must still disarm the mode: its keys are registered
-        // globally, and this is the only way out of them.
-        endKeyboardMode()
+        // already false would otherwise leave a highlight on a window that is gone.
+        clearSelection()
         guard expanded else { return }
         expanded = false
         // One place, because `collapse()` is reached from every hiding path: the

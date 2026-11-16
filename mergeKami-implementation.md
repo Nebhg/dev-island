@@ -549,3 +549,54 @@ The branch is `merge-kami`, now 13 commits ahead of `master` and still unpushed.
    the README that a keyboard detour counts as choosing a panel.
 5. **Re-record or cut `docs/panel-tour.gif`.** The captions no longer claim what the
    recording shows, but the recording is still of the old chords.
+
+---
+
+## Round 2 — after the first runtime look
+
+Ben ran it. First observations: `⌃⌥↓` then `←`/`→` and `↑`/`↓` work; hovering does not
+arm. That confirmed phase 5 and converted three "unverified" lines to "observed",
+and it produced three changes of direction, below.
+
+### Phase 7 — arm the keyboard whenever the island is open
+
+**Why:** the mode existed to bound a global key capture, and the bound was chosen on a
+wrong premise. `inHotZone` is `islandRect.insetBy(dx: -8, dy: -4)` — the pointer has to
+be *on the island* — so a hover is a pointing gesture, not a cursor parked near the
+notch. The exposure the flag was protecting against does not exist, and two entry
+conditions for one behaviour is the kind of inconsistency the rewrite was meant to
+remove.
+
+**What was done**
+
+| before | after |
+|---|---|
+| `keyboardMode` flag | deleted |
+| `$keyboardMode.combineLatest($expanded)` | `$expanded` alone, still with no `receive(on:)` |
+| `endKeyboardMode()` | `clearSelection()`; there is no mode to end |
+| `⌃⌥↓` three-state | two-state: open + select, or close |
+| `⌃⌘V` toggled | always lands on the clipboard and selects; it no longer closes |
+| `moveSelection` required a selection | seeds from nothing, first press creates it |
+| `retargetSelection` seeded on every panel change | returns early when nothing is selected |
+| collapse guard tested `keyboardMode` | tests `pinnedOpen` only |
+| app-switch observer tested `keyboardMode` | tests `expanded` |
+
+**The visual rule this buys.** Keys follow `expanded`; the *highlight* follows the
+first arrow press. So a hovered island looks exactly as it did before — no row
+highlighted until you reach for the keyboard. `↑` from nothing lands on the first row,
+not the second.
+
+**Where this differs from the phase-1…6 reasoning.** `retargetSelection` used to seed a
+selection on any panel change, which was right when the selection *was* the mode. It is
+now wrong: switching panels by icon or `⌥`-number is not a request for a highlight. The
+guard was inverted rather than deleted, so `⌥2` after `⌃⌘V` still keeps the highlight
+you had.
+
+**Still broken after this commit, by design:** `cycleListPanel` only knows the two list
+panels, so `←`/`→` do nothing while Music is showing. Fixed in phase 8.
+
+### Recorded but not yet checked
+
+- **Auto-repeat** on a held arrow is still unmeasured — Ben's report covers single
+  presses.
+- **The exit audit** has not been run. That is still the release gate.

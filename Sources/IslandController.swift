@@ -159,12 +159,11 @@ final class IslandController {
             queue: .main
         ) { [weak self] note in
             guard let self else { return }
-            // Focus moving to another app ends the keyboard selection: its Return
-            // and Escape are global while the mode is on, and must not follow the
-            // user somewhere they did not expect them taken. This notification is
-            // also the ⌘Tab path — Spotlight, watched separately below, is the case
-            // that re-suppresses the island rather than closing it.
-            if self.model.keyboardMode {
+            // Focus moving to another app closes the island: its Return and Escape are
+            // global and must not follow the user somewhere they did not expect them
+            // taken. This notification is also the ⌘Tab path — Spotlight, watched
+            // separately below, is the case that re-suppresses rather than closes.
+            if self.model.expanded {
                 self.model.collapse()
             }
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
@@ -226,16 +225,13 @@ final class IslandController {
             }
             .store(in: &cancellables)
 
-        // The mode's keys are bare, so they are global while they are installed — no
-        // hop to the next run loop turn that could leave them live after the mode has
-        // gone. Two terms rather than `keyboardMode` alone: `endKeyboardMode()` runs
-        // before `collapse()` clears `expanded`, so the first emission already
-        // unregisters, and a collapse that arrived with `expanded` already false still
-        // finds this the second, independent way to unregister.
-        model.$keyboardMode
-            .combineLatest(model.$expanded)
-            .sink { [weak self] mode, expanded in
-                if mode && expanded {
+        // The island is keyboard-driven whenever it is open, so these follow `expanded`
+        // alone. Deliberately no `receive(on:)`, unlike the rest of this file: the
+        // keys are bare and global, and a hop to the next run loop turn would leave
+        // them captured for a frame after the window has closed.
+        model.$expanded
+            .sink { [weak self] expanded in
+                if expanded {
                     self?.hotKeys.installModeKeys()
                 } else {
                     self?.hotKeys.uninstallModeKeys()
@@ -297,37 +293,25 @@ final class IslandController {
         refreshMousePolicy()
     }
 
-    /// `⌃⌥↓`, the only way in from the keyboard.
+    /// `⌃⌥↓`. Opens on the panel the keyboard can land on, with its first row
+    /// selected; closes when the island is already up.
     ///
-    /// Three states, because arming is now a separate event from opening: an island
-    /// the pointer is already holding open is not a request to close it, and pressing
-    /// the key to say "drive this from the keyboard" used to shut the window instead.
-    ///
-    /// - closed → open on the panel the keyboard can land on, and arm
-    /// - open, not armed → arm where it is
-    /// - armed → close
+    /// Two states rather than three. Arming used to be a separate step, before the
+    /// island became keyboard-driven whenever it is open; now the only thing this key
+    /// adds is the landing panel and the initial highlight, which a hover deliberately
+    /// does not draw.
     func toggleExpanded() {
-        guard model.expanded else {
-            expandWithoutPointer(on: model.keyboardLandingPanel)
-            armKeyboardMode()
+        guard !model.expanded else {
+            model.collapse()
             return
         }
-        if model.keyboardMode {
-            model.collapse()
-        } else {
-            armKeyboardMode()
-        }
-    }
-
-    /// Puts the mode on the island that is already open, on the panel it should land
-    /// on. `beginKeyboardMode` is what ends up setting `activePanel`, so a hovered
-    /// island on Music moves to the last list rather than arming over nothing.
-    private func armKeyboardMode() {
+        let landing = model.keyboardLandingPanel
+        expandWithoutPointer(on: landing)
         // `expandWithoutPointer` can refuse — Spotlight is open, or `expand()` was
-        // blocked — and arming a mode on a window that never appeared would register
-        // bare keys with nothing on screen to exit from.
+        // blocked — and selecting a row on a window that never appeared would leave a
+        // highlight with nothing behind it.
         guard model.expanded else { return }
-        model.beginKeyboardMode(on: model.keyboardLandingPanel)
+        model.beginKeyboardMode(on: landing)
     }
 
     /// Opens the island from the toggle key or the status menu.
@@ -395,21 +379,13 @@ final class IslandController {
 
     // MARK: - Keyboard selection
 
-    /// `⌃⌘V`: opens the island on the clipboard with a row selected, or closes it if
-    /// that mode is already on.
+    /// `⌃⌘V`: opens the island on the clipboard with its first row selected.
     ///
-    /// The same mode `⌃⌥↓` arms, with the panel forced. There is no separate picker
-    /// state and no clipboard session — this is only a different landing panel, which
-    /// is why it costs no second set of keys.
-    ///
-    /// Closing rather than only dropping the selection matters: `expandWithoutPointer`
-    /// pins the island, so a shortcut that left it open would leave it stuck open with
-    /// nothing driving it.
+    /// Not a toggle. `⌃⌘V` on an island the pointer is already holding open means "show
+    /// me the clipboard" and closes nothing; `⎋` and `⌃⌥↓` are how it closes. A key
+    /// that sometimes closed the window was fine while the island was pointer-only and
+    /// is a trap now that hovering opens it too.
     private func openKeyboardMode() {
-        if model.keyboardMode, model.expanded {
-            model.collapse()
-            return
-        }
         expandWithoutPointer(on: .clipboard)
         // Spotlight open, or `expand()` refused: there is nothing to select from.
         guard model.expanded else { return }
@@ -877,17 +853,14 @@ final class IslandController {
     private func scheduleCollapse() {
         collapseWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            // The single authority on whether a collapse may happen. `pinnedOpen` and
-            // the keyboard mode are separate reasons with one guard: a pinned island
-            // was not asked to close by the pointer, and a keyboard-driven one is
-            // where the pointer being elsewhere is the normal case. Gating only one of
-            // them — as the two branches this was merged from each did — leaves the
-            // other relying on the call order in `handleMouse`.
+            // The single authority on whether a collapse may happen. `pinnedOpen` is
+            // the one reason a collapse is refused: an island opened from the keyboard
+            // was not asked to close by the pointer, because the pointer is elsewhere
+            // and may never arrive.
             guard let self,
                   !self.model.locksOpen,
                   !self.model.isInteracting,
                   !self.model.pinnedOpen,
-                  !self.model.keyboardMode,
                   !self.inHotZone(NSEvent.mouseLocation)
             else { return }
             self.model.collapse()

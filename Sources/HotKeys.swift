@@ -201,9 +201,9 @@ final class HotKeys {
         panelRefs.forEach { UnregisterEventHotKey($0) }
         panelRefs.removeAll()
         // The mode cannot outlive the island, so collapsing takes its keys too. The
-        // `$keyboardMode` sink already does this a moment earlier; clearing here as
-        // well means the invariant holds structurally, and a sink that stops firing
-        // cannot leave bare `↩` stolen from every app with no island on screen.
+        // `$expanded` sink already does this a moment earlier; clearing here as well
+        // means the invariant holds structurally, and a sink that stops firing cannot
+        // leave bare `↩` stolen from every app with no island on screen.
         uninstallModeKeys()
         isInstalled = false
         // The Carbon event handler, the toggle hotkey and the clipboard shortcut
