@@ -669,3 +669,30 @@ and no main element, and writing only one channel would move half the volume.
 settable element fails silently, deliberately: the alternative is an error dialog for a
 key press. There is also **no on-screen feedback** — the system volume HUD only appears
 for the system's own volume keys — so the only confirmation is the sound.
+
+### Phase 9 — the terminal shortcut
+
+**Decision:** `⌥⇧⌘T`, at Ben's request.
+
+**Why not `⇧⌘T`:** Reopen Closed Tab in Chrome, Safari and Firefox, Reopen Closed Editor
+in VS Code and Sublime. Registered process-wide, it would be the `⇧⌘V` mistake again and
+in the apps you are most likely to be in when you reach for terminal history.
+
+**Why not `⌃⌘T`:** free, and symmetric with `⌃⌘V`. Offered and declined; three modifiers
+buy near-certain freedom from collision at the cost of one-handed reach.
+
+**`⌥⇧⌘T` is free as far as I know.** That is "not a documented system shortcut", not
+"measured" — the same distinction `PLAN.md` §2 draws everywhere else.
+
+**What was done:** `Slot.terminalShortcut = 14`, registered by
+`installTerminalShortcut()` at launch beside the toggle key, dispatching `onTerminal` to
+`openKeyboardMode(on: .terminal)`. The two named shortcuts now share one function with
+the panel as a parameter.
+
+**Kept out of the clipboard preset deliberately.** A preset that moved both chords would
+offer `⇧⌘V`/`⇧⌘T`, and `⇧⌘T` is exactly the chord this avoids. Only the clipboard
+shortcut is configurable because only it had a free choice.
+
+**Behaviour change from phase 7:** neither named shortcut toggles any more. `⌃⌘V` on an
+island that is already up lands on the clipboard and selects, rather than closing it.
+`⎋` and `⌃⌥↓` are the close keys.

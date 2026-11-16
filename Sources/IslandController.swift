@@ -136,10 +136,14 @@ final class IslandController {
             self?.toggleExpanded()
         }
         hotKeys.onClipboard = { [weak self] in
-            self?.openKeyboardMode()
+            self?.openKeyboardMode(on: .clipboard)
+        }
+        hotKeys.onTerminal = { [weak self] in
+            self?.openKeyboardMode(on: .terminal)
         }
         hotKeys.onModeKey = { [weak self] key in self?.handleModeKey(key) }
         hotKeys.installToggle()
+        hotKeys.installTerminalShortcut()
 
         dropView.canAccept = { [weak model] in model?.expanded == true }
         dropView.onTargetChange = { [weak model] targeted in
@@ -379,17 +383,17 @@ final class IslandController {
 
     // MARK: - Keyboard selection
 
-    /// `⌃⌘V`: opens the island on the clipboard with its first row selected.
+    /// `⌃⌘V` and `⌥⇧⌘T`: open the island on one history list, first row selected.
     ///
-    /// Not a toggle. `⌃⌘V` on an island the pointer is already holding open means "show
-    /// me the clipboard" and closes nothing; `⎋` and `⌃⌥↓` are how it closes. A key
+    /// Not a toggle. Either key on an island the pointer is already holding open means
+    /// "show me this list" and closes nothing; `⎋` and `⌃⌥↓` are how it closes. A key
     /// that sometimes closed the window was fine while the island was pointer-only and
     /// is a trap now that hovering opens it too.
-    private func openKeyboardMode() {
-        expandWithoutPointer(on: .clipboard)
+    private func openKeyboardMode(on panel: PanelID) {
+        expandWithoutPointer(on: panel)
         // Spotlight open, or `expand()` refused: there is nothing to select from.
         guard model.expanded else { return }
-        model.beginKeyboardMode(on: .clipboard)
+        model.beginKeyboardMode(on: panel)
     }
 
     private func handleModeKey(_ key: HotKeys.ModeKey) {

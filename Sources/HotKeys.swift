@@ -41,8 +41,9 @@ enum ClipboardShortcut: String, CaseIterable {
 ///
 /// Three groups, each registered only while it can mean something:
 ///
-/// - **always** — `⌃⌥↓` and the clipboard shortcut. Both have to work while the
-///   island is shut, since a closed island is exactly when they are needed.
+/// - **always** — `⌃⌥↓`, the clipboard shortcut and the terminal shortcut. All three
+///   have to work while the island is shut, since a closed island is exactly when
+///   they are needed.
 /// - **panel** — `⌥1`–`⌥5`, while the island is open.
 /// - **mode** — `←`, `→`, `↑`, `↓`, `↩`, `⌤` and `⎋`, while the island is open. These
 ///   are the only chords here with no modifier, which is why their lifetime is tied
@@ -78,12 +79,16 @@ final class HotKeys {
     /// selected, or leaves that mode if it is already on.
     var onClipboard: (() -> Void)?
     var onModeKey: ((ModeKey) -> Void)?
+    /// The terminal shortcut: the same landing as the clipboard one, on the other
+    /// history list.
+    var onTerminal: (() -> Void)?
 
     private var handler: EventHandlerRef?
     private var panelRefs: [EventHotKeyRef] = []
     private var modeRefs: [EventHotKeyRef] = []
     private var toggleRef: EventHotKeyRef?
     private var shortcutRef: EventHotKeyRef?
+    private var terminalRef: EventHotKeyRef?
     private var isInstalled = false
 
     /// One raw-value namespace shared by every group, so a hotkey ID identifies
@@ -105,6 +110,7 @@ final class HotKeys {
         case paste = 11
         case pasteKeypad = 12
         case close = 13
+        case terminalShortcut = 14
     }
 
     private struct Key {
@@ -223,6 +229,23 @@ final class HotKeys {
         modeRefs.removeAll()
     }
 
+    /// Registers `⌥⇧⌘T`: open the island on the terminal history.
+    ///
+    /// Fixed rather than following the clipboard preset. A preset that moved both
+    /// chords would offer `⇧⌘V` / `⇧⌘T` — and `⇧⌘T` is Reopen Closed Tab in three
+    /// browsers and two editors, which is the same objection that took `⇧⌘V` off the
+    /// clipboard. Two modifiers on one shortcut and three on the other is asymmetric
+    /// and deliberate: only one of them has a free choice, so only one takes it.
+    func installTerminalShortcut() {
+        installEventHandler()
+        guard terminalRef == nil else { return }
+        terminalRef = register(Key(
+            slot: .terminalShortcut,
+            keyCode: UInt32(kVK_ANSI_T),
+            modifiers: UInt32(optionKey | shiftKey | cmdKey)
+        ))
+    }
+
     /// Replaces the clipboard shortcut; nil switches it off.
     ///
     /// The result says only whether Carbon returned an error. It is **not** a
@@ -304,6 +327,8 @@ final class HotKeys {
             onToggle?()
         case .clipboard:
             onClipboard?()
+        case .terminalShortcut:
+            onTerminal?()
         case .left:
             onModeKey?(.cyclePanel(-1))
         case .right:
